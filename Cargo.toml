@@ -1,0 +1,61 @@
+[package]
+name = "beam-cert-ui"
+version = "0.1.0"
+authors = ["janskiba <jan.skiba@dkfz-heidelberg.de>"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+dioxus = { version = "0.6", features = ["router", "fullstack"] }
+tokio = { version = "1", optional = true }
+tokio-util = { version = "0.7", optional = true, features = ["time"] }
+axum ={ version = "0.7", optional = true }
+clap = { version = "4", optional = true, features = ["env", "derive"] }
+reqwest = { version = "0.12", optional = true, features = [
+    "json",
+], default-features = false }
+serde_json = { version = "1", optional = true }
+serde = { version = "1", features = ["derive"] }
+anyhow = { version = "1", optional = true }
+lettre = { version = "0.11", optional = true, default-features = false, features = [
+    "tokio1-rustls-tls",
+    "smtp-transport",
+] }
+heed = { version = "0.21", optional = true, default-features = false, features = [
+] }
+futures-util = { version = "0.3", optional = true }
+x509-parser = { version = "0.17.0", optional = true }
+jiff = { version = "0.2", features = ["serde"] }
+
+[features]
+default = ["web"]
+server = [
+    "dep:tokio-util",
+    "dep:heed",
+    "dep:tokio",
+    "dep:axum",
+    "dep:lettre",
+    "dep:x509-parser",
+    "dep:anyhow",
+    "dep:clap",
+    "dep:reqwest",
+    "dep:serde_json",
+    "dep:futures-util",
+    "dioxus/server",
+]
+web = ["dioxus/web"]
+desktop = ["dioxus/desktop"]
+mobile = ["dioxus/mobile"]
+
+[profile]
+
+[profile.wasm-dev]
+inherits = "dev"
+opt-level = 1
+
+[profile.server-dev]
+inherits = "dev"
+
+[profile.android-dev]
+inherits = "dev"
