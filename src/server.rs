@@ -1,30 +1,32 @@
 use std::{
-    future::poll_fn,
+    collections::{hash_map::Entry, HashMap},
+    future::{poll_fn, Future},
     net::SocketAddr,
     ops::Deref,
     path::PathBuf,
     str::FromStr,
-    sync::LazyLock,
+    sync::{Arc, LazyLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, bail, Context};
 use clap::Parser;
 use dioxus::logger::tracing;
 use dioxus::prelude::*;
-use futures_util::{ready, FutureExt};
-use jiff::{SignedDuration, Span, Timestamp, Unit};
+use futures_util::{ready, FutureExt, TryFutureExt};
+use jiff::{SignedDuration, Span, Zoned, ToSpan, Unit};
 use reqwest::{
     header::{HeaderName, HeaderValue},
     Client, Method, StatusCode, Url,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::{net::TcpListener, sync::Mutex};
+use tokio::{io::AsyncWriteExt, net::TcpListener, sync::Mutex};
 use tokio_util::time::DelayQueue;
 use x509_parser::{
     certification_request::X509CertificationRequest,
     prelude::{FromDer, TbsCertificate, X509Certificate},
+    x509::X509Name,
 };
 
 use crate::{OnlineStatus, ProxyStatus};
@@ -80,6 +82,58 @@ static VAULT_CLIENT: LazyLock<Client> = LazyLock::new(|| {
         .unwrap()
 });
 static CERT_WAIT_QUEUE: LazyLock<Mutex<DelayQueue<String>>> = LazyLock::new(|| Default::default());
+static CERTS: LazyLock<CertDb> =
+    LazyLock::new(|| CertDb(sled::Db::open(&CONFIG.db_dir).expect("Failed to open db")));
+
+struct CertDb(sled::Db);
+
+impl CertDb {
+    #[tracing::instrument(skip(self))]
+    async fn get_or_create(&self, proxy_id: &str) -> anyhow::Result<DbCert> {
+        if let Some(cert_info) = self.0.get(proxy_id)? {
+            return Ok(serde_json::from_slice(&cert_info)?);
+        }
+        let email = {
+            let proxy_name = proxy_id.split_once('.').ok_or(anyhow!("Invalid proxy id"))?.0;
+            let csr_file = CONFIG.csr_dir.join(format!("{proxy_name}.csr"));
+            let csr = tokio::fs::read(csr_file).await.context("No matching csr")?;
+            let pem = x509_parser::pem::parse_x509_pem(&csr)?.1;
+            let csr = X509CertificationRequest::from_der(&pem.contents)?.1;
+            let cn = csr.certification_request_info.subject.get_cn()?;
+            if cn != proxy_id {
+                bail!("Csr for {proxy_id} has an invalid common name: {cn}")
+            }
+            csr.certification_request_info.subject.get_email()?.map(Into::into)
+        };
+        let cert = DbCert::Enrolled {
+            email,
+            expiration_time: &Zoned::now() + 1.year(),
+            first_insert: Zoned::now(),
+        };
+        self.0
+            .insert(proxy_id.as_bytes(), serde_json::to_vec(&cert)?);
+        self.0.flush_async().await?;
+        Ok(cert)
+    }
+
+    fn insert(&self, proxy_id: &str, cert: &DbCert) -> anyhow::Result<()> {
+        self.0.insert(proxy_id.as_bytes(), serde_json::to_vec(cert)?)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+enum DbCert {
+    Pending {
+        email: String,
+        sent: Zoned,
+    },
+    Enrolled {
+        email: Option<String>,
+        expiration_time: Zoned,
+        first_insert: Zoned,
+    },
+}
 
 pub async fn launch() {
     dioxus::logger::initialize_default();
@@ -91,7 +145,8 @@ pub async fn launch() {
     tokio::spawn(async {
         loop {
             let Some(expired) = poll_fn(|cx| {
-                let cache = ready!(CERT_WAIT_QUEUE.lock().poll(cx));
+                let lock_fut = std::pin::pin!(CERT_WAIT_QUEUE.lock());
+                let mut cache = ready!(lock_fut.poll(cx));
                 cache.poll_expired(cx)
             })
             .await
@@ -100,14 +155,12 @@ pub async fn launch() {
                 tokio::time::sleep(Duration::from_secs(60)).await;
                 continue;
             };
-            let csr = match tokio::fs::read(CONFIG.csr_dir.join(format!("{}.csr", expired.get_ref()))).await {
-                Ok(csr) => csr,
-                Err(e) => {
-                    tracing::warn!("Failed to read csr for {}: {e}", expired.get_ref());
-                    continue;
-                }
-            };
-            if let Err(e) = sign_csr(&csr, &CONFIG.pki_eth_ttl).await {
+            if let Err(e) =
+                tokio::fs::read(CONFIG.csr_dir.join(format!("{}.csr", expired.get_ref())))
+                    .err_into()
+                    .and_then(|csr| async move { sign_csr(&csr, &CONFIG.pki_eth_ttl).await})
+                    .await
+            {
                 tracing::warn!("Failed to sign csr for {}: {e}", expired.get_ref());
             };
         }
@@ -134,7 +187,7 @@ pub async fn get_certs() -> anyhow::Result<Vec<ProxyStatus>> {
         .json()
         .await?;
     let serials: Vec<String> = Deserialize::deserialize(&res["data"]["keys"])?;
-    serials
+    let pems = serials
         .into_iter()
         .map(|s| async move {
             let value = VAULT_CLIENT
@@ -150,18 +203,54 @@ pub async fn get_certs() -> anyhow::Result<Vec<ProxyStatus>> {
                 .json::<Value>()
                 .await?;
             let cert: String = Deserialize::deserialize(&value["data"]["certificate"])?;
-            let pem = x509_parser::pem::parse_x509_pem(cert.as_bytes())?.1;
-            let cert = pem.parse_x509()?.to_owned();
-            let cn = cert.get_cn()?;
-            anyhow::Ok(ProxyStatus::Registered {
-                proxy_id: cn.to_owned(),
-                email: cert.get_email()?.map(ToOwned::to_owned),
-                online: get_online_status(cn).await?,
-                cert_expires_in: cert.get_ttl()?,
-            })
+            anyhow::Ok(x509_parser::pem::parse_x509_pem(cert.as_bytes())?.1)
         })
         .collect::<futures_util::future::TryJoinAll<_>>()
+        .await?;
+    // Find newest cert for each proxy
+    let mut newest_certs = HashMap::new();
+    for pem in pems.iter() {
+        let cert = pem.parse_x509()?;
+        let cn = cert.subject.get_cn()?.to_owned();
+        match newest_certs.entry(cn) {
+            Entry::Occupied(mut entry) if get_ttl(entry.get())? < get_ttl(&cert)? => {
+                entry.insert(cert);
+            }
+            Entry::Occupied(..) => (),
+            Entry::Vacant(mut empty) => {
+                empty.insert(cert);
+            }
+        }
+    }
+    let mut status = newest_certs
+        .into_iter()
+        .map(|(proxy_id, cert)| {
+            let err_context = format!("Failed to get cert info for {proxy_id}");
+            async move {
+                let db_cert = CERTS
+                    .get_or_create(&proxy_id)
+                    .await?;
+                anyhow::Ok(ProxyStatus::Registered {
+                    online: get_online_status(&proxy_id).await?,
+                    proxy_id: proxy_id.clone(),
+                    email: cert.subject.get_email()?.map(Into::into),
+                    cert_expires_in: get_ttl(&cert)?,
+                })
+            }.map(|res| res.context(err_context))
+        })
+        .collect::<futures_util::future::JoinAll<_>>()
         .await
+        .into_iter()
+        .filter_map(|res| match res {
+            Ok(ok) => Some(ok),
+            Err(e) => {
+                tracing::warn!("Failed to get proxy status: {e:#}");
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    status.sort_by(|a, b| a.proxy_id().cmp(b.proxy_id()));
+    Ok(status)
 }
 
 static BROKER_CLIENT: LazyLock<Client> = LazyLock::new(Client::new);
@@ -183,7 +272,7 @@ async fn get_online_status(proxy_id: &str) -> anyhow::Result<OnlineStatus> {
                 &res.json::<serde_json::Value>().await?["last_disconnect"],
             )?;
             Ok(OnlineStatus::LastSeen(
-                Timestamp::try_from(system_time)?.duration_since(Timestamp::now()),
+                Zoned::try_from(system_time)?.duration_since(&Zoned::now()),
             ))
         }
         StatusCode::NOT_FOUND => Ok(OnlineStatus::NeverConnected),
@@ -222,6 +311,28 @@ async fn sign_csr(csr: &[u8], ttl: &Span) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub async fn register_new_csr(email: &str, csr: &str) -> anyhow::Result<()> {
+    let pem = x509_parser::pem::parse_x509_pem(csr.as_bytes())?.1;
+    let csr_info = X509CertificationRequest::from_der(&pem.contents)?.1;
+    let cert_lifetime = &Zoned::now() + 1.year();
+    let cn = csr_info.certification_request_info.subject.get_cn()?;
+    let Ok(mut file) = tokio::fs::File::create_new(CONFIG.csr_dir.join(&format!("{cn}.csr"))).await
+    else {
+        bail!("Csr for {cn} already exists");
+    };
+    file.write_all(csr.as_bytes()).await?;
+    file.flush().await?;
+    CERTS.insert(
+        cn,
+        &DbCert::Enrolled {
+            email: Some(email.into()),
+            expiration_time: &Zoned::now() + 1.year(),
+            first_insert: Zoned::now(),
+        },
+    )?;
+    Ok(())
+}
+
 static EMAIL_CLIENT: LazyLock<lettre::AsyncSmtpTransport<lettre::Tokio1Executor>> =
     LazyLock::new(|| {
         lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::from_url(&CONFIG.smtp_url.to_string())
@@ -230,20 +341,18 @@ static EMAIL_CLIENT: LazyLock<lettre::AsyncSmtpTransport<lettre::Tokio1Executor>
     });
 
 pub trait CertExt {
-    fn get_ttl(&self) -> anyhow::Result<SignedDuration>;
     fn get_cn(&self) -> anyhow::Result<&str>;
     fn get_email(&self) -> anyhow::Result<Option<&str>>;
 }
 
-impl CertExt for X509Certificate<'_> {
-    fn get_ttl(&self) -> anyhow::Result<SignedDuration> {
-        let ts = jiff::Timestamp::from_second(self.validity.not_after.timestamp())?;
-        Ok(ts.duration_since(jiff::Timestamp::now()))
-    }
+fn get_ttl(cert: &X509Certificate) -> anyhow::Result<SignedDuration> {
+    let ts = jiff::Timestamp::from_second(cert.validity.not_after.timestamp())?;
+    Ok(ts.duration_since(jiff::Timestamp::now()))
+}
 
+impl CertExt for X509Name<'_> {
     fn get_cn(&self) -> anyhow::Result<&str> {
-        self.subject
-            .iter_common_name()
+        self.iter_common_name()
             .next()
             .ok_or(anyhow!("Cert has no CN"))?
             .as_str()
@@ -251,8 +360,7 @@ impl CertExt for X509Certificate<'_> {
     }
 
     fn get_email(&self) -> anyhow::Result<Option<&str>> {
-        self.subject
-            .iter_email()
+        self.iter_email()
             .next()
             .map(|mail| mail.as_str())
             .transpose()
