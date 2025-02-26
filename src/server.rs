@@ -14,7 +14,7 @@ use clap::Parser;
 use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use futures_util::{ready, FutureExt, TryFutureExt};
-use jiff::{SignedDuration, Span, Zoned, ToSpan, Unit};
+use jiff::{SignedDuration, Span, SpanRelativeTo, ToSpan, Unit, Zoned};
 use reqwest::{
     header::{HeaderName, HeaderValue},
     Client, Method, StatusCode, Url,
@@ -24,9 +24,7 @@ use serde_json::Value;
 use tokio::{io::AsyncWriteExt, net::TcpListener, sync::Mutex};
 use tokio_util::time::DelayQueue;
 use x509_parser::{
-    certification_request::X509CertificationRequest,
-    prelude::{FromDer, TbsCertificate, X509Certificate},
-    x509::X509Name,
+    certification_request::X509CertificationRequest, pem::Pem, prelude::{FromDer, TbsCertificate, X509Certificate}, x509::X509Name
 };
 
 use crate::{OnlineStatus, ProxyStatus};
@@ -54,8 +52,8 @@ pub struct Config {
     #[clap(long, env, default_value = "1y")]
     pki_ttl: Span,
 
-    #[clap(long, env, default_value = "7d")]
-    pki_eth_ttl: Span,
+    #[clap(long, env, default_value = "7d", value_parser=parse_eth_ttl)]
+    pki_eth_ttl: Duration,
 
     #[clap(long, env)]
     smtp_url: reqwest::Url,
@@ -65,6 +63,13 @@ pub struct Config {
 
     #[clap(long, env)]
     db_dir: PathBuf,
+}
+
+fn parse_eth_ttl(string: &str) -> anyhow::Result<Duration> {
+    let span: Span = string.parse()?;
+    let new_cert_ttl: Duration = span.to_duration(SpanRelativeTo::days_are_24_hours())?.try_into()?;
+    anyhow::ensure!(new_cert_ttl > CERT_RENEW_THRESHOLD, "pki_eth_ttl needs to be greater than {}h", CERT_RENEW_THRESHOLD.as_secs() / 60 / 60);
+    Ok(new_cert_ttl)
 }
 
 static CONFIG: LazyLock<Config> = LazyLock::new(Config::parse);
@@ -135,14 +140,18 @@ enum DbCert {
     },
 }
 
-pub async fn launch() {
+const CERT_RENEW_THRESHOLD: Duration = Duration::from_secs(60 * 60 * 24);
+
+pub async fn launch() -> anyhow::Result<()> {
     dioxus::logger::initialize_default();
 
     let router = axum::Router::new()
         .serve_dioxus_application(ServeConfigBuilder::new(), crate::App)
         .into_make_service();
 
-    tokio::spawn(async {
+    // TODO: Wait for vault
+    update_expiration_queue().await?;
+    tokio::spawn(async move {
         loop {
             let Some(expired) = poll_fn(|cx| {
                 let lock_fut = std::pin::pin!(CERT_WAIT_QUEUE.lock());
@@ -156,23 +165,36 @@ pub async fn launch() {
                 continue;
             };
             if let Err(e) =
-                tokio::fs::read(CONFIG.csr_dir.join(format!("{}.csr", expired.get_ref())))
+                tokio::fs::read(CONFIG.csr_dir.join(format!("{}.csr", expired.get_ref().split_once('.').unwrap().0)))
                     .err_into()
-                    .and_then(|csr| async move { sign_csr(&csr, &CONFIG.pki_eth_ttl).await})
+                    .and_then(|csr| async move { sign_csr(&csr).await})
                     .await
             {
-                tracing::warn!("Failed to sign csr for {}: {e}", expired.get_ref());
+                tracing::warn!("Failed to sign csr for {}: {e:#}", expired.get_ref());
             };
+            if let Err(e) = update_expiration_queue().await {
+                tracing::error!("Failed to update expiration queue: {e:#}");
+            }
         }
     });
 
     let listener = TcpListener::bind(dioxus::cli_config::fullstack_address_or_localhost())
-        .await
-        .unwrap();
-    axum::serve(listener, router).await.unwrap();
+        .await?;
+    axum::serve(listener, router).await?;
+    Ok(())
 }
 
-pub async fn get_certs() -> anyhow::Result<Vec<ProxyStatus>> {
+async fn update_expiration_queue() -> anyhow::Result<()> {
+    let pems = get_all_vault_pems().await?;
+    let newest_certs = get_newest_cert_per_cn(&pems)?;
+    let mut certs_queue = CERT_WAIT_QUEUE.lock().await;
+    newest_certs.into_iter().for_each(|(proxy_id, cert)| {
+        certs_queue.insert(proxy_id, get_ttl(&cert).unwrap().try_into().unwrap_or(Duration::ZERO).saturating_sub(CERT_RENEW_THRESHOLD));
+    });
+    Ok(())
+}
+
+async fn get_all_vault_pems() -> anyhow::Result<Vec<Pem>> {
     let mut res: serde_json::Value = VAULT_CLIENT
         .request(
             Method::from_bytes(b"LIST").unwrap(),
@@ -187,7 +209,7 @@ pub async fn get_certs() -> anyhow::Result<Vec<ProxyStatus>> {
         .json()
         .await?;
     let serials: Vec<String> = Deserialize::deserialize(&res["data"]["keys"])?;
-    let pems = serials
+    serials
         .into_iter()
         .map(|s| async move {
             let value = VAULT_CLIENT
@@ -206,8 +228,10 @@ pub async fn get_certs() -> anyhow::Result<Vec<ProxyStatus>> {
             anyhow::Ok(x509_parser::pem::parse_x509_pem(cert.as_bytes())?.1)
         })
         .collect::<futures_util::future::TryJoinAll<_>>()
-        .await?;
-    // Find newest cert for each proxy
+        .await
+}
+
+fn get_newest_cert_per_cn(pems: &[Pem]) -> anyhow::Result<HashMap<String, X509Certificate<'_>>> {
     let mut newest_certs = HashMap::new();
     for pem in pems.iter() {
         let cert = pem.parse_x509()?;
@@ -222,6 +246,13 @@ pub async fn get_certs() -> anyhow::Result<Vec<ProxyStatus>> {
             }
         }
     }
+    Ok(newest_certs)
+}
+
+pub async fn get_certs() -> anyhow::Result<Vec<ProxyStatus>> {
+    let pems = get_all_vault_pems().await?;
+    let newest_certs = get_newest_cert_per_cn(&pems)?;
+    // Find newest cert for each proxy
     let mut status = newest_certs
         .into_iter()
         .map(|(proxy_id, cert)| {
@@ -281,7 +312,7 @@ async fn get_online_status(proxy_id: &str) -> anyhow::Result<OnlineStatus> {
     }
 }
 
-async fn sign_csr(csr: &[u8], ttl: &Span) -> anyhow::Result<()> {
+async fn sign_csr(csr: &[u8]) -> anyhow::Result<()> {
     let pem = x509_parser::pem::parse_x509_pem(csr)?.1;
     let csr_info = X509CertificationRequest::from_der(&pem.contents)?.1;
     let cn = csr_info
@@ -292,22 +323,20 @@ async fn sign_csr(csr: &[u8], ttl: &Span) -> anyhow::Result<()> {
         .ok_or(anyhow!("Cert has no CN"))?
         .as_str()
         .context("Failed to convert CN to string")?;
-    if !cn.starts_with(CONFIG.broker_url.host_str().unwrap()) {
-        anyhow::bail!("Cert has an invalid hostname")
-    }
     VAULT_CLIENT
         .post(CONFIG.vault_url.join(&format!(
             "/v1/{}/sign/{}",
             CONFIG.pki_realm, CONFIG.pki_default_role
         ))?)
         .json(&serde_json::json!({
-            "csr": csr,
+            "csr": String::from_utf8_lossy(csr),
             "common_name": cn,
-            "ttl": ttl.total(Unit::Hour)?
+            "ttl": format!("{}h", CONFIG.pki_eth_ttl.as_secs() / 60 / 60)
         }))
         .send()
         .await?
         .error_for_status()?;
+    tracing::info!("Signed csr for {cn}");
     Ok(())
 }
 
@@ -330,6 +359,8 @@ pub async fn register_new_csr(email: &str, csr: &str) -> anyhow::Result<()> {
             first_insert: Zoned::now(),
         },
     )?;
+    sign_csr(csr.as_bytes()).await?;
+    update_expiration_queue().await?;
     Ok(())
 }
 
