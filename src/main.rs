@@ -151,17 +151,30 @@ fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
         match &site.proxy_status {
             ProxyStatus::WaitingOnCsr => rsx!{
                 td { colspan: "3", "Waiting on CSR" }
-                td { button { onclick: move |_| {
-                    let proxy_name = proxy_name.to_owned();
-                    let email = email.to_owned();
-                    async move {
-                        if let Err(e) = invite_site(email, proxy_name).await {
-                            tracing::error!("Failed to invite site: {e:#}");
-                        };
-                        sites.restart();
-                    } },
-                    i { class: "fa-solid fa-repeat" }
-                } }
+                td {
+                    class: "actions",
+                    button { onclick: move |_| {
+                        let proxy_name = proxy_name.to_owned();
+                        let email = email.to_owned();
+                        async move {
+                            if let Err(e) = invite_site(email, proxy_name).await {
+                                tracing::error!("Failed to invite site: {e:#}");
+                            };
+                            sites.restart();
+                        } },
+                        i { class: "fa-solid fa-repeat" }
+                    }
+                    button { onclick: move |_| {
+                        let proxy_id = proxy_id.to_owned();
+                        async move {
+                            if let Err(e) = remove_site(proxy_id).await {
+                                tracing::error!("Failed to invite site: {e:#}");
+                            };
+                            sites.restart();
+                        } },
+                        i { class: "fa-solid fa-trash" }
+                    }
+            }
             },
             ProxyStatus::Registered { online, cert_expires_in, expiration_time } => rsx! {
                 {
