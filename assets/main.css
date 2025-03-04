@@ -70,8 +70,9 @@ body {
 table {
     width: 100%;
     border-collapse: collapse;
+    table-layout: fixed;
     background: white;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 0px 10px rgba(0, 0, 0, 0.1);
     border-radius: 8px;
     overflow: hidden;
 }
@@ -84,12 +85,8 @@ td {
 }
 
 th {
-    background: #71509a;
+    background: blue;
     color: white;
-}
-
-svg {
-    margin-right: 5px;
 }
 
 .status-online {
@@ -107,4 +104,46 @@ svg {
 .cert-warning {
     color: red;
     font-weight: bold;
+}
+
+.enroll {
+    width: fit-content;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+.enroll > input {
+    width: 100%;
+    padding: 10px;
+    margin: 10px 0;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    box-sizing: border-box;
+}
+
+button {
+    padding: 10px;
+    background: blue;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+input[type="submit"] {
+    padding: 10px;
+    background: blue;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+button:hover {
+    background: darkblue;
+}
+
+input[type="submit"]:hover {
+    background: darkblue;
 }

@@ -7,8 +7,8 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use dioxus::{logger::tracing::warn, prelude::*};
-use jiff::{SignedDuration, Span, SpanRound};
+use dioxus::{logger::tracing::{self, warn}, prelude::*};
+use jiff::{RoundMode, SignedDuration, SignedDurationRound, Span, SpanArithmetic, SpanCompare, SpanRound, ToSpan, Zoned};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Routable, PartialEq)]
@@ -98,100 +98,128 @@ fn Navbar() -> Element {
 /// Echo component that demonstrates fullstack server functions.
 #[component]
 fn Status() -> Element {
-    let mut response = use_server_future(get_status)?;
+    let mut get_sites = use_server_future(get_status)?;
     rsx! {
         script { src: "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/js/all.min.js" }
         div { id: "status",
-            if let Some(Ok(thing)) = response.value().read().deref() {
+            if let Some(Ok(sites)) = get_sites.value().read().deref() {
                 table {
                     thead { tr {
-                        th { "Proxy ID" }
-                        th { "Email" }
-                        th { "Status" }
-                        th { "Expires in" }
+                        th { "Site ID" }
+                        th { "Contact" }
+                        th { "Ephemeral expiration" }
+                        th { "Verified until" }
+                        th { "Online" }
                         th { "Action" }
                     } }
                     tbody {
-                        for proxy_status in thing {
-                            tr { key: "{proxy_status.proxy_id()}", { render_proxy_status(proxy_status) } }
+                        for site_info in sites {
+                            tr { key: "{site_info.proxy_id}", { render_site(site_info) } }
                         }
                     }
                 }
-                button { onclick: move |_| response.restart(), "Refresh" }
+            }
+            button { onclick: move |_| get_sites.restart(), "Refresh" }
+            form { class: "enroll", onsubmit: move |e| async move {
+                    e.prevent_default();
+                    let email = e.data.values().get("email").map(FormValue::as_value).unwrap_or_default();
+                    let site_id = e.data.values().get("site_id").map(FormValue::as_value).unwrap_or_default();
+                    if let Err(e) = invite_site(email, site_id).await {
+                        tracing::error!("Failed to invite site: {e:#}");
+                    };
+                    get_sites.restart();
+                },
+                input { r#type: "text", name: "site_id", placeholder: "Site ID", required: true }
+                input { r#type: "email", name: "email", placeholder: "Admin Email", required: true }
+                input { r#type: "submit", value: "Enroll" }
             }
         }
     }
 }
 
-fn render_proxy_status(status: &ProxyStatus) -> Element {
-    let proxy_id = status.proxy_id();
-    let proxy_name = proxy_id.split_once('.').unwrap().0;
-    let email = match status {
-        ProxyStatus::WaitingOnCsr { email, ..} => email.as_str(),
-        ProxyStatus::Registered { email, .. } => email.as_deref().unwrap_or("Unknown"),
-    };
+fn render_site(site: &SiteInfo) -> Element {
+    let proxy_name = site.proxy_id.split_once('.').unwrap().0.to_owned();
+    let email = site.email.as_deref().unwrap_or("Unknown").to_owned();
+    let now = Zoned::now();
+    let span_round = SpanRound::new().days_are_24_hours().smallest(jiff::Unit::Hour).largest(jiff::Unit::Year).relative(&now);
     rsx!{
         td { "{proxy_name}" }
         td { "{email}" }
-        match status {
-            ProxyStatus::WaitingOnCsr { .. } => rsx!{ td { colspan: "3", "Waiting on CSR" } },
-            ProxyStatus::Registered { proxy_id, email, online, cert_expires_in } => rsx! {
+        match &site.proxy_status {
+            ProxyStatus::WaitingOnCsr => rsx!{
+                td { colspan: "3", "Waiting on CSR" }
+                td { button { onclick: move |_| {
+                    let proxy_name = proxy_name.to_owned();
+                    let email = email.to_owned();
+                    async move {
+                        if let Err(e) = invite_site(email, proxy_name).await {
+                            tracing::error!("Failed to invite site: {e:#}");
+                        };
+                    } },
+                    i { class: "fa-solid fa-repeat" }
+                } }
+            },
+            ProxyStatus::Registered { online, cert_expires_in, expiration_time } => rsx! {
+                {
+                    let expires_in = cert_expires_in.round(span_round).unwrap();
+                    rsx! { td { "{expires_in:#}" } }
+                }
+                {
+                    let dt = expiration_time - &now;
+                    let is_short = dt.compare(SpanCompare::from(1.week()).days_are_24_hours()).unwrap().is_lt();
+                    let dt_fmt = expiration_time.strftime("%F");
+                    rsx! { td { class: is_short.then_some("cert-warning"), "{dt_fmt:#}" } }
+                }
                 match online {
                     OnlineStatus::Online => rsx! {
                         td { class: "status-online",
                             i { class: "fas fa-check-circle" }
-                            "Online"
+                            " Online"
                         }
                     },
                     OnlineStatus::NeverConnected => rsx!{ td { class: "status-never",
                         i { class: "fas fa-times-circle" }
-                        "Never"
+                        " Never"
                     } },
                     OnlineStatus::LastSeen(seen) => rsx! { td { class: "status-last-seen",
                         i { class: "fas fa-clock" }
                         {
                             let seen = Span::try_from(*seen).unwrap().round(SpanRound::new().days_are_24_hours().largest(jiff::Unit::Day).smallest(jiff::Unit::Minute)).unwrap();
-                            rsx!("Last seen {seen:#}")
+                            rsx!(" {seen:#}")
                         }
                     } },
                 }
-                {
-                    let expires_in_hours = cert_expires_in.as_hours();
-                    let expires_in_days = expires_in_hours / 24;
-                    if expires_in_days == 0 {
-                        rsx! { td { class: "cert-warning", "{expires_in_hours} hours" } }
-                    } else {
-                        rsx! { td { class: (expires_in_days < 5).then_some("cert-warning"),"{expires_in_days} days" } }
-                    }
-                }
+                td { "Todo" }
             },
         }
-        td { "Todo" }
     }
 }
 
-/// Echo the user input on the server.
 #[server]
-async fn get_status() -> Result<Vec<ProxyStatus>, ServerFnError> {
+async fn get_status() -> Result<Vec<SiteInfo>, ServerFnError> {
     server::get_certs().await.inspect_err(|e| warn!(%e)).map_err(ServerFnError::new)
+}
+
+#[server]
+async fn invite_site(email: String, site_id: String) -> Result<(), ServerFnError> {
+    server::invite_site(&email, &site_id).await.inspect_err(|e| warn!(%e)).map_err(ServerFnError::new)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ProxyStatus {
-    WaitingOnCsr { proxy_id: String, email: String },
+    WaitingOnCsr,
     Registered {
-        proxy_id: String,
-        email: Option<String>,
         online: OnlineStatus,
-        cert_expires_in: SignedDuration,
+        expiration_time: Zoned,
+        cert_expires_in: Span,
     }
 }
 
-impl ProxyStatus {
-    fn proxy_id(&self) -> &str {
-        let (ProxyStatus::Registered { proxy_id, .. } | ProxyStatus::WaitingOnCsr { proxy_id, .. }) = self;
-        proxy_id
-    }
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SiteInfo {
+    proxy_id: String,
+    email: Option<String>,
+    proxy_status: ProxyStatus,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
