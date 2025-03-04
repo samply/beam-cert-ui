@@ -98,11 +98,11 @@ fn Navbar() -> Element {
 /// Echo component that demonstrates fullstack server functions.
 #[component]
 fn Status() -> Element {
-    let mut get_sites = use_server_future(get_status)?;
+    let mut sites_resource = use_server_future(get_status)?;
     rsx! {
         script { src: "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/js/all.min.js" }
         div { id: "status",
-            if let Some(Ok(sites)) = get_sites.value().read().deref() {
+            if let Some(Ok(sites)) = sites_resource.value().read().deref() {
                 table {
                     thead { tr {
                         th { "Site ID" }
@@ -114,20 +114,22 @@ fn Status() -> Element {
                     } }
                     tbody {
                         for site_info in sites {
-                            tr { key: "{site_info.proxy_id}", { render_site(site_info) } }
+                            tr { key: "{site_info.proxy_id}", { render_site(site_info, sites_resource) } }
                         }
                     }
                 }
             }
-            button { onclick: move |_| get_sites.restart(), "Refresh" }
+            button { onclick: move |_| sites_resource.restart(), "Refresh" }
             form { class: "enroll", onsubmit: move |e| async move {
+                    // TODO: clear form on invite
                     e.prevent_default();
                     let email = e.data.values().get("email").map(FormValue::as_value).unwrap_or_default();
                     let site_id = e.data.values().get("site_id").map(FormValue::as_value).unwrap_or_default();
                     if let Err(e) = invite_site(email, site_id).await {
                         tracing::error!("Failed to invite site: {e:#}");
+                        return;
                     };
-                    get_sites.restart();
+                    sites_resource.restart();
                 },
                 input { r#type: "text", name: "site_id", placeholder: "Site ID", required: true }
                 input { r#type: "email", name: "email", placeholder: "Admin Email", required: true }
@@ -137,8 +139,9 @@ fn Status() -> Element {
     }
 }
 
-fn render_site(site: &SiteInfo) -> Element {
+fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
     let proxy_name = site.proxy_id.split_once('.').unwrap().0.to_owned();
+    let proxy_id = site.proxy_id.clone();
     let email = site.email.as_deref().unwrap_or("Unknown").to_owned();
     let now = Zoned::now();
     let span_round = SpanRound::new().days_are_24_hours().smallest(jiff::Unit::Hour).largest(jiff::Unit::Year).relative(&now);
@@ -155,6 +158,7 @@ fn render_site(site: &SiteInfo) -> Element {
                         if let Err(e) = invite_site(email, proxy_name).await {
                             tracing::error!("Failed to invite site: {e:#}");
                         };
+                        sites.restart();
                     } },
                     i { class: "fa-solid fa-repeat" }
                 } }
@@ -189,7 +193,16 @@ fn render_site(site: &SiteInfo) -> Element {
                         }
                     } },
                 }
-                td { "Todo" }
+                td { button { onclick: move |_| {
+                    let proxy_id = proxy_id.to_owned();
+                    async move {
+                        if let Err(e) = remove_site(proxy_id).await {
+                            tracing::error!("Failed to invite site: {e:#}");
+                        };
+                        sites.restart();
+                    } },
+                    i { class: "fa-solid fa-trash" }
+                } }
             },
         }
     }
@@ -203,6 +216,11 @@ async fn get_status() -> Result<Vec<SiteInfo>, ServerFnError> {
 #[server]
 async fn invite_site(email: String, site_id: String) -> Result<(), ServerFnError> {
     server::invite_site(&email, &site_id).await.inspect_err(|e| warn!(%e)).map_err(ServerFnError::new)
+}
+
+#[server]
+async fn remove_site(proxy_id: String) -> Result<(), ServerFnError> {
+    server::remove_site(&proxy_id).await.inspect_err(|e| warn!(%e)).map_err(ServerFnError::new)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

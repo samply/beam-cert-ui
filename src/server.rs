@@ -1,7 +1,7 @@
 use std::{
     cmp::Ordering,
-    collections::{hash_map::Entry, HashMap},
-    future::{poll_fn, Future},
+    collections::{HashMap, hash_map::Entry},
+    future::{Future, poll_fn},
     net::SocketAddr,
     ops::Deref,
     path::PathBuf,
@@ -10,16 +10,16 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use clap::Parser;
 use dioxus::logger::tracing;
 use dioxus::prelude::*;
-use futures_util::{ready, FutureExt, TryFutureExt};
+use futures_util::{FutureExt, TryFutureExt, ready};
 use jiff::{SignedDuration, Span, SpanRelativeTo, ToSpan, Unit, Zoned};
 use lettre::{AsyncTransport, Message};
 use reqwest::{
-    header::{HeaderName, HeaderValue},
     Client, Method, StatusCode, Url,
+    header::{HeaderName, HeaderValue},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -148,7 +148,12 @@ impl CertDb {
         self.0
             .iter()
             .flatten()
-            .flat_map(|(k, cert)| anyhow::Ok((String::from_utf8(k.to_vec())?, serde_json::from_slice::<DbCert>(&cert)?)))
+            .flat_map(|(k, cert)| {
+                anyhow::Ok((
+                    String::from_utf8(k.to_vec())?,
+                    serde_json::from_slice::<DbCert>(&cert)?,
+                ))
+            })
             .filter(|(_, c)| matches!(c, DbCert::Pending { .. }))
             .collect()
     }
@@ -277,6 +282,7 @@ async fn get_all_vault_pems() -> anyhow::Result<Vec<Pem>> {
 }
 
 fn get_newest_cert_per_cn(pems: &[Pem]) -> anyhow::Result<HashMap<String, X509Certificate<'_>>> {
+    // TODO: Check crl for revoked certs
     let mut newest_certs = HashMap::new();
     for pem in pems.iter() {
         let cert = pem.parse_x509()?;
@@ -422,7 +428,8 @@ pub async fn register_new_csr(email: &str, csr: &str) -> anyhow::Result<()> {
     let csr_info = X509CertificationRequest::from_der(&pem.contents)?.1;
     let cert_lifetime = &Zoned::now() + 1.year();
     let cn = csr_info.certification_request_info.subject.get_cn()?;
-    let Ok(mut file) = tokio::fs::File::create_new(CONFIG.csr_dir.join(&format!("{cn}.csr"))).await
+    let proxy_name = cn.split_once('.').ok_or(anyhow!("Invalid proxy id"))?.0;
+    let Ok(mut file) = tokio::fs::File::create_new(CONFIG.csr_dir.join(&format!("{proxy_name}.csr"))).await
     else {
         bail!("Csr for {cn} already exists");
     };
@@ -438,6 +445,40 @@ pub async fn register_new_csr(email: &str, csr: &str) -> anyhow::Result<()> {
     )?;
     sign_csr(csr.as_bytes()).await?;
     update_expiration_queue().await?;
+    Ok(())
+}
+
+pub async fn remove_site(proxy_id: &str) -> anyhow::Result<()> {
+    let proxy_name = proxy_id.split_once('.').ok_or(anyhow!("Invalid proxy id"))?.0;
+    let _ = tokio::fs::remove_file(CONFIG.csr_dir.join(&format!("{proxy_name}.csr"))).await;
+    let _ = CERTS.0.remove(proxy_id.as_bytes());
+    let pems = get_all_vault_pems().await?;
+    for pem in pems {
+        let Ok(cert) = pem.parse_x509() else { continue; };
+        let Ok(cn) = cert.subject.get_cn() else { continue; };
+        if cn == proxy_id {
+            let serial = cert.raw_serial_as_string();
+            if let Err(e) = revoke_serial(&serial).await {
+                tracing::warn!("Failed to revoke cert {serial} from {proxy_id}: {e:#}");
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn revoke_serial(serial: &str) -> anyhow::Result<()> {
+    VAULT_CLIENT
+        .post(
+            CONFIG
+                .vault_url
+                .join(&format!("/v1/{}/revoke", CONFIG.pki_realm))?,
+        )
+        .json(&serde_json::json!({
+            "serial_number": serial 
+        }))
+        .send()
+        .await?
+        .error_for_status()?;
     Ok(())
 }
 
