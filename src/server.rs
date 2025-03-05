@@ -11,6 +11,7 @@ use std::{
 };
 
 use anyhow::{Context, anyhow, bail};
+use axum::body::Bytes;
 use clap::Parser;
 use dioxus::logger::tracing;
 use dioxus::prelude::*;
@@ -29,6 +30,7 @@ use x509_parser::{
     certification_request::X509CertificationRequest,
     pem::Pem,
     prelude::{FromDer, TbsCertificate, X509Certificate},
+    revocation_list::CertificateRevocationList,
     x509::X509Name,
 };
 
@@ -228,9 +230,10 @@ pub async fn launch() -> anyhow::Result<()> {
 }
 
 async fn update_expiration_queue() -> anyhow::Result<()> {
-    let pems = get_all_vault_pems().await?;
-    let newest_certs = get_newest_cert_per_cn(&pems)?;
+    let (pems, crl) = tokio::try_join!(get_all_vault_pems(), get_crl())?;
+    let newest_certs = get_newest_cert_per_cn(&pems, CertificateRevocationList::from_der(&crl)?.1)?;
     let mut certs_queue = CERT_WAIT_QUEUE.lock().await;
+    certs_queue.clear();
     newest_certs.into_iter().for_each(|(proxy_id, cert)| {
         certs_queue.insert(
             proxy_id,
@@ -242,6 +245,21 @@ async fn update_expiration_queue() -> anyhow::Result<()> {
         );
     });
     Ok(())
+}
+
+async fn get_crl() -> anyhow::Result<Bytes> {
+    VAULT_CLIENT
+        .get(
+            CONFIG
+                .vault_url
+                .join(&format!("/v1/{}/crl", CONFIG.pki_realm))?,
+        )
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .err_into()
+        .await
 }
 
 async fn get_all_vault_pems() -> anyhow::Result<Vec<Pem>> {
@@ -281,12 +299,17 @@ async fn get_all_vault_pems() -> anyhow::Result<Vec<Pem>> {
         .await
 }
 
-fn get_newest_cert_per_cn(pems: &[Pem]) -> anyhow::Result<HashMap<String, X509Certificate<'_>>> {
-    // TODO: Check crl for revoked certs
+fn get_newest_cert_per_cn<'a>(
+    pems: &'a [Pem],
+    crl: CertificateRevocationList,
+) -> anyhow::Result<HashMap<String, X509Certificate<'a>>> {
     let mut newest_certs = HashMap::new();
     for pem in pems.iter() {
         let cert = pem.parse_x509()?;
         let cn = cert.subject.get_cn()?.to_owned();
+        if crl.iter_revoked_certificates().any(|revoked| revoked.serial() == &cert.serial) {
+            continue;
+        }
         match newest_certs.entry(cn) {
             Entry::Occupied(mut entry)
                 if get_ttl(entry.get())?
@@ -305,8 +328,8 @@ fn get_newest_cert_per_cn(pems: &[Pem]) -> anyhow::Result<HashMap<String, X509Ce
 }
 
 pub async fn get_certs() -> anyhow::Result<Vec<SiteInfo>> {
-    let pems = get_all_vault_pems().await?;
-    let newest_certs = get_newest_cert_per_cn(&pems)?;
+    let (pems, crl) = tokio::try_join!(get_all_vault_pems(), get_crl())?;
+    let newest_certs = get_newest_cert_per_cn(&pems, CertificateRevocationList::from_der(&crl)?.1)?;
     // Find newest cert for each proxy
     let mut status = newest_certs
         .into_iter()
@@ -429,7 +452,8 @@ pub async fn register_new_csr(email: &str, csr: &str) -> anyhow::Result<()> {
     let cert_lifetime = &Zoned::now() + 1.year();
     let cn = csr_info.certification_request_info.subject.get_cn()?;
     let proxy_name = cn.split_once('.').ok_or(anyhow!("Invalid proxy id"))?.0;
-    let Ok(mut file) = tokio::fs::File::create_new(CONFIG.csr_dir.join(&format!("{proxy_name}.csr"))).await
+    let Ok(mut file) =
+        tokio::fs::File::create_new(CONFIG.csr_dir.join(&format!("{proxy_name}.csr"))).await
     else {
         bail!("Csr for {cn} already exists");
     };
@@ -449,13 +473,20 @@ pub async fn register_new_csr(email: &str, csr: &str) -> anyhow::Result<()> {
 }
 
 pub async fn remove_site(proxy_id: &str) -> anyhow::Result<()> {
-    let proxy_name = proxy_id.split_once('.').ok_or(anyhow!("Invalid proxy id"))?.0;
+    let proxy_name = proxy_id
+        .split_once('.')
+        .ok_or(anyhow!("Invalid proxy id"))?
+        .0;
     let _ = tokio::fs::remove_file(CONFIG.csr_dir.join(&format!("{proxy_name}.csr"))).await;
     let _ = CERTS.0.remove(proxy_id.as_bytes());
     let pems = get_all_vault_pems().await?;
     for pem in pems {
-        let Ok(cert) = pem.parse_x509() else { continue; };
-        let Ok(cn) = cert.subject.get_cn() else { continue; };
+        let Ok(cert) = pem.parse_x509() else {
+            continue;
+        };
+        let Ok(cn) = cert.subject.get_cn() else {
+            continue;
+        };
         if cn == proxy_id {
             let serial = cert.raw_serial_as_string();
             if let Err(e) = revoke_serial(&serial).await {
@@ -474,7 +505,7 @@ async fn revoke_serial(serial: &str) -> anyhow::Result<()> {
                 .join(&format!("/v1/{}/revoke", CONFIG.pki_realm))?,
         )
         .json(&serde_json::json!({
-            "serial_number": serial 
+            "serial_number": serial
         }))
         .send()
         .await?
