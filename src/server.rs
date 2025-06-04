@@ -125,8 +125,15 @@ const CERT_RENEW_THRESHOLD: Duration = Duration::from_secs(60 * 60 * 24);
 
 pub async fn launch() -> anyhow::Result<()> {
     dioxus::logger::initialize_default();
-    // TODO: Wait for vault
-    update_expiration_queue().await?;
+    let mut attempt: u8 = 1;
+    while let Err(e) = update_expiration_queue().await {
+        if attempt > 20 {
+            bail!("Failed to reach vault: {e:#?}");
+        }
+        attempt += 1;
+        tracing::info!("Failed to reach vault, retrying in 10s: {e:#}");
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    }
     tokio::spawn(async move {
         loop {
             let Some(expired) = poll_fn(|cx| {
