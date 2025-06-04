@@ -648,7 +648,7 @@ mod submit {
         token: String,
     }
 
-    pub async fn submit_handler(form: Form<SubmitForm>) -> Html<Cow<'static, str>> {
+    pub async fn submit_handler(form: Form<SubmitForm>) -> Html<String> {
         let Some((expected_proxy_id, email)) = CERTS
             .get_all_pending()
             .into_iter()
@@ -657,16 +657,16 @@ mod submit {
                     .then_some((proxy_id, cert.get_email()?.to_owned()))
             })
         else {
-            return Html("Invalid token or no pending registration found".into());
+            return message("Invalid token or no pending registration found");
         };
         if let Err(e) = register_new_csr(&email, &form.csr, &expected_proxy_id).await {
-            tracing::error!("Failed to register csr: {e:#?}");
-            return Html(format!(
-                "Failed to register csr: {e:#?}"
-            ).into());
+            tracing::error!("Failed to register CSR: {e:#?}");
+            return message(&format!("Failed to register CSR: {e:#}"));
         }
-        Html(format!(
-            "Successfully registered csr for {expected_proxy_id} with email {email}. You can now start the bridgehead."
-        ).into())	
+        message(&format!("Successfully registered CSR for {expected_proxy_id} with email {email}. You can now start the bridgehead."))
+    }
+
+    fn message(inner: &str) -> Html<String> {
+        Html(format!(r#"<head><style>body {{display: flex; align-items: center; justify-content: center; font-size: 50px; }} div {{ width: 50%; text-align: center }}</style></head><body><div>{inner}</div></body>"#))
     }
 }
