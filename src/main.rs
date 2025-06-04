@@ -1,26 +1,23 @@
 #[cfg(feature = "server")]
 mod server;
 
-use std::{
-    ops::Deref,
-    sync::LazyLock,
-    time::{Duration, SystemTime},
-};
+use std::ops::Deref;
 
-use dioxus::{logger::tracing::{self, warn}, prelude::*};
-use jiff::{RoundMode, SignedDuration, SignedDurationRound, Span, SpanArithmetic, SpanCompare, SpanRound, ToSpan, Zoned};
+use dioxus::{logger::tracing::{self}, prelude::*};
+use jiff::{SignedDuration, Span, SpanCompare, SpanRound, ToSpan, Zoned};
 use serde::{Deserialize, Serialize};
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "server")]
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(crate::server::launch());
+        .block_on(crate::server::launch())?;
     #[cfg(not(feature = "server"))]
     dioxus::launch(App);
+    Ok(())
 }
 
 #[component]
@@ -160,17 +157,17 @@ fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
 
 #[server]
 async fn get_status() -> Result<Vec<SiteInfo>, ServerFnError> {
-    server::get_certs().await.inspect_err(|e| warn!(%e)).map_err(ServerFnError::new)
+    server::get_certs().await.inspect_err(|e| tracing::warn!(%e)).map_err(ServerFnError::new)
 }
 
 #[server]
 async fn invite_site(email: String, site_id: String) -> Result<(), ServerFnError> {
-    server::invite_site(&email, &site_id).await.inspect_err(|e| warn!(%e)).map_err(ServerFnError::new)
+    server::invite_site(&email, &site_id).await.inspect_err(|e| tracing::warn!(%e)).map_err(ServerFnError::new)
 }
 
 #[server]
 async fn remove_site(proxy_id: String) -> Result<(), ServerFnError> {
-    server::remove_site(&proxy_id).await.inspect_err(|e| warn!(%e)).map_err(ServerFnError::new)
+    server::remove_site(&proxy_id).await.inspect_err(|e| tracing::warn!(%e)).map_err(ServerFnError::new)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

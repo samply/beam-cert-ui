@@ -3,11 +3,9 @@ use std::{
     collections::{HashMap, hash_map::Entry},
     future::{Future, poll_fn},
     net::SocketAddr,
-    ops::Deref,
     path::PathBuf,
-    str::FromStr,
-    sync::{Arc, LazyLock},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    sync::LazyLock,
+    time::{Duration, SystemTime},
 };
 
 use anyhow::{Context, anyhow, bail};
@@ -16,7 +14,7 @@ use clap::Parser;
 use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use futures_util::{FutureExt, TryFutureExt, ready};
-use jiff::{SignedDuration, Span, SpanRelativeTo, ToSpan, Unit, Zoned};
+use jiff::{Span, SpanRelativeTo, ToSpan, Zoned};
 use lettre::{AsyncTransport, Message};
 use rand::Rng;
 use reqwest::{
@@ -30,7 +28,7 @@ use tokio_util::time::DelayQueue;
 use x509_parser::{
     certification_request::X509CertificationRequest,
     pem::Pem,
-    prelude::{FromDer, TbsCertificate, X509Certificate},
+    prelude::{FromDer, X509Certificate},
     revocation_list::CertificateRevocationList,
     x509::X509Name,
 };
@@ -119,7 +117,7 @@ static VAULT_CLIENT: LazyLock<Client> = LazyLock::new(|| {
 });
 static CERT_WAIT_QUEUE: LazyLock<Mutex<DelayQueue<String>>> = LazyLock::new(|| Default::default());
 static CERTS: LazyLock<CertDb> =
-    LazyLock::new(|| CertDb(sled::Db::open(&CONFIG.db_dir).expect("Failed to open db")));
+    LazyLock::new(|| CertDb(sled::open(&CONFIG.db_dir).expect("Failed to open db")));
 
 const CERT_RENEW_THRESHOLD: Duration = Duration::from_secs(60 * 60 * 24);
 
@@ -224,7 +222,7 @@ impl CertDb {
             first_insert: Zoned::now(),
         };
         self.0
-            .insert(proxy_id.as_bytes(), serde_json::to_vec(&cert)?);
+            .insert(proxy_id.as_bytes(), serde_json::to_vec(&cert)?)?;
         self.0.flush_async().await?;
         Ok(cert)
     }
@@ -289,7 +287,7 @@ async fn get_crl() -> anyhow::Result<Bytes> {
 }
 
 async fn get_all_vault_pems() -> anyhow::Result<Vec<Pem>> {
-    let mut res: serde_json::Value = VAULT_CLIENT
+    let res: serde_json::Value = VAULT_CLIENT
         .request(
             Method::from_bytes(b"LIST").unwrap(),
             CONFIG
@@ -352,7 +350,7 @@ fn get_newest_cert_per_cn<'a>(
                 entry.insert(cert);
             }
             Entry::Occupied(..) => (),
-            Entry::Vacant(mut empty) => {
+            Entry::Vacant(empty) => {
                 empty.insert(cert);
             }
         }
@@ -411,7 +409,7 @@ pub async fn get_certs() -> anyhow::Result<Vec<SiteInfo>> {
         .collect::<Vec<_>>();
     status.sort_by(|a, b| a.proxy_id.cmp(&b.proxy_id));
     status.extend(CERTS.get_all_pending().into_iter().map(|(proxy_id, cert)| {
-        let DbCert::Pending { email, sent, otp } = cert else {
+        let DbCert::Pending { email, .. } = cert else {
             unreachable!()
         };
         SiteInfo {
@@ -481,7 +479,6 @@ async fn sign_csr(csr: &[u8]) -> anyhow::Result<()> {
 pub async fn register_new_csr(email: &str, csr: &str, expected_proxy_id: &str) -> anyhow::Result<()> {
     let pem = x509_parser::pem::parse_x509_pem(csr.as_bytes())?.1;
     let csr_info = X509CertificationRequest::from_der(&pem.contents)?.1;
-    let cert_lifetime = &Zoned::now() + 1.year();
     let cn = csr_info.certification_request_info.subject.get_cn()?;
     anyhow::ensure!(
         cn == expected_proxy_id,
@@ -631,10 +628,9 @@ pub fn generate_secret<const N: usize>() -> String {
 }
 
 mod submit {
-    use std::borrow::Cow;
     use constant_time_eq::constant_time_eq;
 
-    use axum::{Form, http::Uri, response::Html};
+    use axum::{Form, response::Html};
 
     use super::*;
 
