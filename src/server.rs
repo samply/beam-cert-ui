@@ -632,6 +632,7 @@ pub fn generate_secret<const N: usize>() -> String {
 
 mod submit {
     use std::borrow::Cow;
+    use constant_time_eq::constant_time_eq;
 
     use axum::{Form, http::Uri, response::Html};
 
@@ -651,9 +652,8 @@ mod submit {
         let Some((expected_proxy_id, email)) = CERTS
             .get_all_pending()
             .into_iter()
-            // FIXME: constant time comparison
             .find_map(|(proxy_id, cert)| {
-                matches!(cert, DbCert::Pending { ref otp, .. } if otp == &form.token)
+                matches!(cert, DbCert::Pending { ref otp, .. } if constant_time_eq(otp.as_bytes(), form.token.as_bytes()))
                     .then_some((proxy_id, cert.get_email()?.to_owned()))
             })
         else {
