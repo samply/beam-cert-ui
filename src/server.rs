@@ -11,13 +11,14 @@ use std::{
 };
 
 use anyhow::{Context, anyhow, bail};
-use axum::body::Bytes;
+use axum::{body::Bytes, routing::get, Router};
 use clap::Parser;
 use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use futures_util::{FutureExt, TryFutureExt, ready};
 use jiff::{SignedDuration, Span, SpanRelativeTo, ToSpan, Unit, Zoned};
 use lettre::{AsyncTransport, Message};
+use rand::Rng;
 use reqwest::{
     Client, Method, StatusCode, Url,
     header::{HeaderName, HeaderValue},
@@ -48,7 +49,23 @@ pub struct Config {
     broker_url: Url,
 
     #[clap(long, env)]
+    /// Beam broker id, used to verify the csr common name.
+    broker_id: String,
+
+    #[clap(long, env)]
+    /// The public base URL of this service, used for generating the link in the email.
+    public_base_url: Url,
+
+    #[clap(long, env)]
     broker_monitoring_key: String,
+
+    #[clap(long, env, default_value = "0.0.0.0:3000")]
+    /// Bind addr of the public interface of this service
+    public_addr: SocketAddr,
+
+    #[clap(long, env, default_value_t = dioxus::cli_config::fullstack_address_or_localhost())]
+    /// Bind addr of the admin interface of this service
+    admin_addr: SocketAddr,
 
     #[clap(long, env, default_value = "samply_pki")]
     pki_realm: String,
@@ -63,6 +80,7 @@ pub struct Config {
     pki_eth_ttl: Duration,
 
     #[clap(long, env)]
+    /// Full URL to the SMTP server including auth, e.g. `smtp://user:password@localhost:587`
     smtp_url: reqwest::Url,
 
     #[clap(long, env, default_value = "/csr")]
@@ -117,7 +135,9 @@ impl CertDb {
                 .ok_or(anyhow!("Invalid proxy id"))?
                 .0;
             let csr_file = CONFIG.csr_dir.join(format!("{proxy_name}.csr"));
-            let csr = tokio::fs::read(csr_file).await.context("No matching csr")?;
+            let csr = tokio::fs::read(&csr_file)
+                .await
+                .with_context(|| format!("No matching csr: {csr_file:?}"))?;
             let pem = x509_parser::pem::parse_x509_pem(&csr)?.1;
             let csr = X509CertificationRequest::from_der(&pem.contents)?.1;
             let cn = csr.certification_request_info.subject.get_cn()?;
@@ -188,11 +208,6 @@ const CERT_RENEW_THRESHOLD: Duration = Duration::from_secs(60 * 60 * 24);
 
 pub async fn launch() -> anyhow::Result<()> {
     dioxus::logger::initialize_default();
-
-    let router = axum::Router::new()
-        .serve_dioxus_application(ServeConfigBuilder::new(), crate::App)
-        .into_make_service();
-
     // TODO: Wait for vault
     update_expiration_queue().await?;
     tokio::spawn(async move {
@@ -224,8 +239,12 @@ pub async fn launch() -> anyhow::Result<()> {
         }
     });
 
-    let listener = TcpListener::bind(dioxus::cli_config::fullstack_address_or_localhost()).await?;
-    axum::serve(listener, router).await?;
+    let admin_listener = TcpListener::bind(CONFIG.admin_addr).await?;
+    let public_listener = TcpListener::bind(CONFIG.public_addr).await?;
+    tokio::try_join!(
+        axum::serve(admin_listener, Router::new().serve_dioxus_application(ServeConfigBuilder::new(), crate::App)),
+        axum::serve(public_listener, Router::new().route("/", get(submit::submit_csr_page).post(submit::submit_handler)))
+    )?;
     Ok(())
 }
 
@@ -307,7 +326,14 @@ fn get_newest_cert_per_cn<'a>(
     for pem in pems.iter() {
         let cert = pem.parse_x509()?;
         let cn = cert.subject.get_cn()?.to_owned();
-        if crl.iter_revoked_certificates().any(|revoked| revoked.serial() == &cert.serial) {
+        if !cn.ends_with(&CONFIG.broker_id) {
+            tracing::warn!("Skipping cert with CN {cn} as it does not end with the broker id {}", CONFIG.broker_id);
+            continue;
+        }
+        if crl
+            .iter_revoked_certificates()
+            .any(|revoked| revoked.serial() == &cert.serial)
+        {
             continue;
         }
         match newest_certs.entry(cn) {
@@ -446,11 +472,15 @@ async fn sign_csr(csr: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn register_new_csr(email: &str, csr: &str) -> anyhow::Result<()> {
+pub async fn register_new_csr(email: &str, csr: &str, expected_proxy_id: &str) -> anyhow::Result<()> {
     let pem = x509_parser::pem::parse_x509_pem(csr.as_bytes())?.1;
     let csr_info = X509CertificationRequest::from_der(&pem.contents)?.1;
     let cert_lifetime = &Zoned::now() + 1.year();
     let cn = csr_info.certification_request_info.subject.get_cn()?;
+    anyhow::ensure!(
+        cn == expected_proxy_id,
+        "CSR was supposed to be for {expected_proxy_id} but has CN {cn}"
+    );
     let proxy_name = cn.split_once('.').ok_or(anyhow!("Invalid proxy id"))?.0;
     let Ok(mut file) =
         tokio::fs::File::create_new(CONFIG.csr_dir.join(&format!("{proxy_name}.csr"))).await
@@ -494,6 +524,7 @@ pub async fn remove_site(proxy_id: &str) -> anyhow::Result<()> {
             }
         }
     }
+    update_expiration_queue().await?;
     Ok(())
 }
 
@@ -522,14 +553,26 @@ static EMAIL_CLIENT: LazyLock<lettre::AsyncSmtpTransport<lettre::Tokio1Executor>
 
 #[tracing::instrument]
 pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<()> {
-    let proxy_id = format!("{site_id}.{}", CONFIG.broker_url.host_str().unwrap());
-    let token = "random_token";
-    // let mail = Message::builder()
-    //     .to(email.parse()?)
-    //     .from(format!("beam@{}", CONFIG.smtp_url.host_str().unwrap()).parse()?)
-    //     .body(format!("{token}"))?;
-    // let res = EMAIL_CLIENT.send(mail).await?;
-    // tracing::debug!(?res);
+    let proxy_id = format!("{site_id}.{}", CONFIG.broker_id);
+    let token: String = generate_secret::<16>();
+    let user_name = CONFIG.smtp_url.username();
+    let from = format!(
+        "{}@{}",
+        user_name.is_empty().then_some("beam").unwrap_or(user_name),
+        CONFIG.smtp_url.host_str().unwrap()
+    )
+    .parse()?;
+    let mail = Message::builder()
+        .to(email.parse()?)
+        .from(from)
+        .body(format!(
+            "You have been invited to register as bridgehead named {site_id} with the beam network.\n\
+            After enrolling your bridgehead you can submit your CSR here:\n\
+            {} with the following token '{token}'",
+            CONFIG.public_base_url
+        ))?;
+    let res = EMAIL_CLIENT.send(mail).await?;
+    tracing::debug!(?res);
     CERTS.insert(
         &proxy_id,
         &DbCert::Pending {
@@ -566,5 +609,58 @@ impl CertExt for X509Name<'_> {
             .map(|mail| mail.as_str())
             .transpose()
             .context("Failed to convert email to string")
+    }
+}
+
+pub fn generate_secret<const N: usize>() -> String {
+    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
+                            abcdefghijklmnopqrstuvwxyz\
+                            0123456789)(*&^%#@!~";
+    (0..N)
+        .map(|_| {
+            let idx = rand::thread_rng().gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect()
+}
+
+mod submit {
+    use std::borrow::Cow;
+
+    use axum::{Form, http::Uri, response::Html};
+
+    use super::*;
+
+    pub async fn submit_csr_page() -> Html<&'static str> {
+        Html(include_str!("../submit.html"))
+    }
+
+    #[derive(Deserialize)]
+    pub struct SubmitForm {
+        csr: String,
+        token: String,
+    }
+
+    pub async fn submit_handler(form: Form<SubmitForm>) -> Html<Cow<'static, str>> {
+        let Some((expected_proxy_id, email)) = CERTS
+            .get_all_pending()
+            .into_iter()
+            // FIXME: constant time comparison
+            .find_map(|(proxy_id, cert)| {
+                matches!(cert, DbCert::Pending { ref otp, .. } if otp == &form.token)
+                    .then_some((proxy_id, cert.get_email()?.to_owned()))
+            })
+        else {
+            return Html("Invalid token or no pending registration found".into());
+        };
+        if let Err(e) = register_new_csr(&email, &form.csr, &expected_proxy_id).await {
+            tracing::error!("Failed to register csr: {e:#?}");
+            return Html(format!(
+                "Failed to register csr: {e:#?}"
+            ).into());
+        }
+        Html(format!(
+            "Successfully registered csr for {expected_proxy_id} with email {email}. You can now start the bridgehead."
+        ).into())	
     }
 }

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Submit CSR</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f4f4f8;
+      padding: 2em;
+    }
+    .form-container {
+      max-width: 600px;
+      margin: auto;
+      background: white;
+      padding: 2em;
+      border-radius: 8px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    textarea {
+      width: 96%;
+      height: 16rem;
+      padding: 1em;
+      font-family: monospace;
+      font-size: 14px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      resize: vertical;
+    }
+    button {
+      margin-top: 1em;
+      padding: 0.7em 1.5em;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+    label {
+      font-weight: bold;
+      display: block;
+      margin-bottom: 0.5em;
+    }
+    input[type="password"] {
+      width: 97%;
+      padding: 0.7em;
+      margin-top: 0.5em;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="form-container">
+    <form id="csrForm" method="post">
+
+      <label for="csr">Paste your CSR below:</label>
+      <textarea id="csr" name="csr" placeholder="-----BEGIN CERTIFICATE REQUEST-----"></textarea>
+      <input type="password" name="token" placeholder="Token from email" />
+
+      <button type="submit">Submit</button>
+    </form>
+  </div>
+</body>
+</html>
