@@ -121,6 +121,68 @@ static CERT_WAIT_QUEUE: LazyLock<Mutex<DelayQueue<String>>> = LazyLock::new(|| D
 static CERTS: LazyLock<CertDb> =
     LazyLock::new(|| CertDb(sled::Db::open(&CONFIG.db_dir).expect("Failed to open db")));
 
+const CERT_RENEW_THRESHOLD: Duration = Duration::from_secs(60 * 60 * 24);
+
+pub async fn launch() -> anyhow::Result<()> {
+    dioxus::logger::initialize_default();
+    // TODO: Wait for vault
+    update_expiration_queue().await?;
+    tokio::spawn(async move {
+        loop {
+            let Some(expired) = poll_fn(|cx| {
+                let lock_fut = std::pin::pin!(CERT_WAIT_QUEUE.lock());
+                let mut cache = ready!(lock_fut.poll(cx));
+                cache.poll_expired(cx)
+            })
+            .await
+            else {
+                // No certs registered check back in 1m
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                continue;
+            };
+            if let Err(e) = tokio::fs::read(CONFIG.csr_dir.join(format!(
+                "{}.csr",
+                expired.get_ref().split_once('.').unwrap().0
+            )))
+            .err_into()
+            .and_then(|csr| async move { sign_csr(&csr).await })
+            .await
+            {
+                tracing::warn!("Failed to sign csr for {}: {e:#}", expired.get_ref());
+            };
+            if let Err(e) = update_expiration_queue().await {
+                tracing::error!("Failed to update expiration queue: {e:#}");
+            }
+        }
+    });
+
+    let admin_listener = TcpListener::bind(CONFIG.admin_addr).await?;
+    let public_listener = TcpListener::bind(CONFIG.public_addr).await?;
+    tokio::try_join!(
+        axum::serve(admin_listener, Router::new().serve_dioxus_application(ServeConfigBuilder::new(), crate::App)),
+        axum::serve(public_listener, Router::new().route("/", get(submit::submit_csr_page).post(submit::submit_handler)))
+    )?;
+    Ok(())
+}
+
+async fn update_expiration_queue() -> anyhow::Result<()> {
+    let (pems, crl) = tokio::try_join!(get_all_vault_pems(), get_crl())?;
+    let newest_certs = get_newest_cert_per_cn(&pems, CertificateRevocationList::from_der(&crl)?.1)?;
+    let mut certs_queue = CERT_WAIT_QUEUE.lock().await;
+    certs_queue.clear();
+    newest_certs.into_iter().for_each(|(proxy_id, cert)| {
+        certs_queue.insert(
+            proxy_id,
+            get_ttl(&cert)
+                .unwrap()
+                .try_into()
+                .unwrap_or(Duration::ZERO)
+                .saturating_sub(CERT_RENEW_THRESHOLD),
+        );
+    });
+    Ok(())
+}
+
 struct CertDb(sled::Db);
 
 impl CertDb {
@@ -202,68 +264,6 @@ impl DbCert {
             DbCert::Enrolled { email, .. } => email.as_deref(),
         }
     }
-}
-
-const CERT_RENEW_THRESHOLD: Duration = Duration::from_secs(60 * 60 * 24);
-
-pub async fn launch() -> anyhow::Result<()> {
-    dioxus::logger::initialize_default();
-    // TODO: Wait for vault
-    update_expiration_queue().await?;
-    tokio::spawn(async move {
-        loop {
-            let Some(expired) = poll_fn(|cx| {
-                let lock_fut = std::pin::pin!(CERT_WAIT_QUEUE.lock());
-                let mut cache = ready!(lock_fut.poll(cx));
-                cache.poll_expired(cx)
-            })
-            .await
-            else {
-                // No certs registered check back in 1m
-                tokio::time::sleep(Duration::from_secs(60)).await;
-                continue;
-            };
-            if let Err(e) = tokio::fs::read(CONFIG.csr_dir.join(format!(
-                "{}.csr",
-                expired.get_ref().split_once('.').unwrap().0
-            )))
-            .err_into()
-            .and_then(|csr| async move { sign_csr(&csr).await })
-            .await
-            {
-                tracing::warn!("Failed to sign csr for {}: {e:#}", expired.get_ref());
-            };
-            if let Err(e) = update_expiration_queue().await {
-                tracing::error!("Failed to update expiration queue: {e:#}");
-            }
-        }
-    });
-
-    let admin_listener = TcpListener::bind(CONFIG.admin_addr).await?;
-    let public_listener = TcpListener::bind(CONFIG.public_addr).await?;
-    tokio::try_join!(
-        axum::serve(admin_listener, Router::new().serve_dioxus_application(ServeConfigBuilder::new(), crate::App)),
-        axum::serve(public_listener, Router::new().route("/", get(submit::submit_csr_page).post(submit::submit_handler)))
-    )?;
-    Ok(())
-}
-
-async fn update_expiration_queue() -> anyhow::Result<()> {
-    let (pems, crl) = tokio::try_join!(get_all_vault_pems(), get_crl())?;
-    let newest_certs = get_newest_cert_per_cn(&pems, CertificateRevocationList::from_der(&crl)?.1)?;
-    let mut certs_queue = CERT_WAIT_QUEUE.lock().await;
-    certs_queue.clear();
-    newest_certs.into_iter().for_each(|(proxy_id, cert)| {
-        certs_queue.insert(
-            proxy_id,
-            get_ttl(&cert)
-                .unwrap()
-                .try_into()
-                .unwrap_or(Duration::ZERO)
-                .saturating_sub(CERT_RENEW_THRESHOLD),
-        );
-    });
-    Ok(())
 }
 
 async fn get_crl() -> anyhow::Result<Bytes> {
@@ -416,9 +416,8 @@ pub async fn get_certs() -> anyhow::Result<Vec<SiteInfo>> {
     Ok(status)
 }
 
-static BROKER_CLIENT: LazyLock<Client> = LazyLock::new(Client::new);
-
 async fn get_online_status(proxy_id: &str) -> anyhow::Result<OnlineStatus> {
+    static BROKER_CLIENT: LazyLock<Client> = LazyLock::new(Client::new);
     let res = BROKER_CLIENT
         .get(
             CONFIG
