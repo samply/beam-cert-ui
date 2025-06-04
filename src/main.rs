@@ -11,16 +11,6 @@ use dioxus::{logger::tracing::{self, warn}, prelude::*};
 use jiff::{RoundMode, SignedDuration, SignedDurationRound, Span, SpanArithmetic, SpanCompare, SpanRound, ToSpan, Zoned};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Routable, PartialEq)]
-#[rustfmt::skip]
-enum Route {
-    #[layout(Navbar)]
-    #[route("/")]
-    Home {},
-    #[route("/blog/:id")]
-    Blog { id: i32 },
-}
-
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 
@@ -38,60 +28,7 @@ fn App() -> Element {
     rsx! {
         document::Link { rel: "icon", href: FAVICON }
         document::Link { rel: "stylesheet", href: MAIN_CSS }
-        Router::<Route> {}
-    }
-}
-
-/// Home page
-#[component]
-fn Home() -> Element {
-    rsx! {
-        Status {}
-    }
-}
-
-/// Blog page
-#[component]
-pub fn Blog(id: i32) -> Element {
-    rsx! {
-        div {
-            id: "blog",
-
-            // Content
-            h1 { "This is blog #{id}!" }
-            p { "In blog #{id}, we show how the Dioxus router works and how URL parameters can be passed as props to our route components." }
-
-            // Navigation links
-            Link {
-                to: Route::Blog { id: id - 1 },
-                "Previous"
-            }
-            span { " <---> " }
-            Link {
-                to: Route::Blog { id: id + 1 },
-                "Next"
-            }
-        }
-    }
-}
-
-/// Shared navbar component.
-#[component]
-fn Navbar() -> Element {
-    rsx! {
-        div {
-            id: "navbar",
-            Link {
-                to: Route::Home {},
-                "Home"
-            }
-            Link {
-                to: Route::Blog { id: 1 },
-                "Blog"
-            }
-        }
-
-        Outlet::<Route> {}
+        Status {} 
     }
 }
 
@@ -133,7 +70,7 @@ fn Status() -> Element {
                 },
                 input { r#type: "text", name: "site_id", placeholder: "Site ID", required: true }
                 input { r#type: "email", name: "email", placeholder: "Admin Email", required: true }
-                input { r#type: "submit", value: "Enroll" }
+                input { r#type: "submit", value: "✉ Invite via e-mail to enroll" }
             }
         }
     }
@@ -154,6 +91,16 @@ fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
                 td {
                     class: "actions",
                     button { onclick: move |_| {
+                        let proxy_id = proxy_id.to_owned();
+                        async move {
+                            if let Err(e) = remove_site(proxy_id).await {
+                                tracing::error!("Failed to invite site: {e:#}");
+                            };
+                            sites.restart();
+                        } },
+                        i { class: "fa-solid fa-trash" }
+                    }
+                    button { onclick: move |_| {
                         let proxy_name = proxy_name.to_owned();
                         let email = email.to_owned();
                         async move {
@@ -164,17 +111,7 @@ fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
                         } },
                         i { class: "fa-solid fa-repeat" }
                     }
-                    button { onclick: move |_| {
-                        let proxy_id = proxy_id.to_owned();
-                        async move {
-                            if let Err(e) = remove_site(proxy_id).await {
-                                tracing::error!("Failed to invite site: {e:#}");
-                            };
-                            sites.restart();
-                        } },
-                        i { class: "fa-solid fa-trash" }
-                    }
-            }
+                }
             },
             ProxyStatus::Registered { online, cert_expires_in, expiration_time } => rsx! {
                 {

@@ -72,7 +72,7 @@ table {
     border-collapse: collapse;
     table-layout: fixed;
     background: white;
-    box-shadow: 0 0px 10px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
     border-radius: 8px;
     overflow: hidden;
 }
@@ -110,7 +110,7 @@ th {
     width: fit-content;
     padding: 20px;
     border-radius: 8px;
-    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
 }
 
 .enroll > input {
