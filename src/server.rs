@@ -1,7 +1,7 @@
 use std::{
     cmp::Ordering,
-    collections::{HashMap, hash_map::Entry},
-    future::{Future, poll_fn},
+    collections::{hash_map::Entry, HashMap, HashSet},
+    future::{poll_fn, Future},
     net::SocketAddr,
     path::PathBuf,
     sync::LazyLock,
@@ -133,6 +133,7 @@ pub async fn launch() -> anyhow::Result<()> {
         tokio::time::sleep(Duration::from_secs(10)).await;
     }
     tokio::spawn(async move {
+        let mut faulty_proxy_ids = HashSet::new();
         loop {
             let Some(expired) = poll_fn(|cx| {
                 let lock_fut = std::pin::pin!(CERT_WAIT_QUEUE.lock());
@@ -145,6 +146,10 @@ pub async fn launch() -> anyhow::Result<()> {
                 tokio::time::sleep(Duration::from_secs(60)).await;
                 continue;
             };
+            if faulty_proxy_ids.contains(expired.get_ref()) {
+                tracing::debug!("Skipping signing of faulty cert for {}", expired.get_ref());
+                continue;
+            }
             if let Err(e) = tokio::fs::read(CONFIG.csr_dir.join(format!(
                 "{}.csr",
                 expired.get_ref().split_once('.').unwrap().0
@@ -154,6 +159,7 @@ pub async fn launch() -> anyhow::Result<()> {
             .await
             {
                 tracing::warn!("Failed to sign csr for {}: {e:#}", expired.get_ref());
+                faulty_proxy_ids.insert(expired.into_inner());
             };
             if let Err(e) = update_expiration_queue().await {
                 tracing::error!("Failed to update expiration queue: {e:#}");
