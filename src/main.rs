@@ -23,6 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[component]
 fn App() -> Element {
     rsx! {
+        script { src: "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/js/all.min.js" }
         document::Link { rel: "icon", href: FAVICON }
         document::Link { rel: "stylesheet", href: MAIN_CSS }
         Status {} 
@@ -34,7 +35,6 @@ fn App() -> Element {
 fn Status() -> Element {
     let mut sites_resource = use_server_future(get_status)?;
     rsx! {
-        script { src: "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/js/all.min.js" }
         div { id: "status",
             if let Some(Ok(sites)) = sites_resource.value().read().deref() {
                 table {
