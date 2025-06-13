@@ -1,12 +1,12 @@
 [application]
 
 # App (Project) Name
-name = "beam-cert-ui"
+name = "beam-cert-manager"
 
 [web.app]
 
 # HTML title tag content
-title = "beam-cert-ui"
+title = "beam-cert-manager"
 
 # include `assets` in web platform
 [web.resource]

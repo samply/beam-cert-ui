@@ -23,18 +23,18 @@ jobs:
         name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: beam-cert-ui-binary
-          path: target/dx/beam-cert-ui/release/web/server
+          name: beam-cert-manager-binary
+          path: target/dx/beam-cert-manager/release/web/server
   dockerize:
     if: github.ref_protected || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     needs: bundle
     name: Build and push Docker image
     uses: samply/github-workflows/.github/workflows/docker-ci.yml@main
     with:
-        image-name: "samply/beam-cert-ui"
+        image-name: "samply/beam-cert-manager"
         push-to: 'dockerhub'
         build-platforms: "linux/amd64"
-        artifact-name: "beam-cert-ui-binary"
+        artifact-name: "beam-cert-manager-binary"
     secrets:
         DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

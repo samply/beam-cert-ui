@@ -16,3 +16,9 @@ watch:
     PUBLIC_BASE_URL=http://localhost:3000 \
     BROKER_ID=broker \
     dx serve --port 8000
+
+dockerize:
+    dx bundle -r
+    mkdir -p ./artifacts
+    cp target/dx/beam-cert-manager/release/web/server artifacts/server
+    docker build -t samply/beam-cert-manager:localbuild .

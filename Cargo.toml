@@ -1,5 +1,5 @@
 [package]
-name = "beam-cert-ui"
+name = "beam-cert-manager"
 version = "0.1.0"
 authors = ["janskiba <jan.skiba@dkfz-heidelberg.de>"]
 edition = "2024"
