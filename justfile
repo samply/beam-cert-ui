@@ -18,7 +18,7 @@ watch:
     dx serve --port 8000
 
 dockerize:
-    dx bundle -r
+    dx bundle --release
     mkdir -p ./artifacts
-    cp target/dx/beam-cert-manager/release/web/server artifacts/server
+    cp -r target/dx/beam-cert-manager/release/web/* artifacts
     docker build -t samply/beam-cert-manager:localbuild .
