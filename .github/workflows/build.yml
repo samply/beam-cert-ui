@@ -24,7 +24,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: beam-cert-manager-binary
-          path: target/dx/beam-cert-manager/release/web/server
+          path: target/dx/beam-cert-manager/release/web
   dockerize:
     if: github.ref_protected || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     needs: bundle
