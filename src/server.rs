@@ -37,53 +37,61 @@ use crate::{OnlineStatus, ProxyStatus, SiteInfo};
 
 #[derive(Debug, Parser)]
 pub struct Config {
+    /// The vault token used to access the PKI secrets.
     #[clap(long, env)]
     vault_token: String,
 
+    /// The URL of the vault server.
     #[clap(long, env)]
     vault_url: Url,
 
+    /// The URL of the beam broker.
     #[clap(long, env)]
     broker_url: Url,
 
-    #[clap(long, env)]
     /// Beam broker id, used to verify the csr common name.
+    #[clap(long, env)]
     broker_id: String,
 
-    #[clap(long, env)]
     /// The public base URL of this service, used for generating the link in the email.
+    #[clap(long, env)]
     public_base_url: Url,
 
+    /// The api key used to access the monitoring endpoint of the broker.
     #[clap(long, env)]
     broker_monitoring_key: String,
 
-    #[clap(long, env, default_value = "0.0.0.0:3000")]
     /// Bind addr of the public interface of this service
+    #[clap(long, env, default_value = "0.0.0.0:3000")]
     public_addr: SocketAddr,
 
-    #[clap(long, env, default_value_t = dioxus::cli_config::fullstack_address_or_localhost())]
     /// Bind addr of the admin interface of this service
+    /// This should not be exposed to the public and is used for administrative tasks.
+    #[clap(long, env, default_value_t = dioxus::cli_config::fullstack_address_or_localhost())]
     admin_addr: SocketAddr,
 
+    /// PKI realm of vault in which the beam certificates are stored.
     #[clap(long, env, default_value = "samply_pki")]
     pki_realm: String,
 
+    /// Default role used to sign the beam certificates.
     #[clap(long, env, default_value = "samply-beam-default-role")]
     pki_default_role: String,
 
-    #[clap(long, env, default_value = "1y")]
-    pki_ttl: Span,
-
+    /// The duration for which the beam certificates will be resigned for.
     #[clap(long, env, default_value = "7d", value_parser=parse_eth_ttl)]
     pki_eth_ttl: Duration,
 
-    #[clap(long, env)]
     /// Full URL to the SMTP server including auth, e.g. `smtp://user:password@localhost:587`
-    smtp_url: reqwest::Url,
+    /// Used for sending emails to users when they register a new bridgehead.
+    #[clap(long, env)]
+    smtp_url: Url,
 
+    /// Directory where the CSRs for broker registration are used are stored.
     #[clap(long, env, default_value = "/csr")]
     csr_dir: PathBuf,
 
+    /// Directory where the local database of this service is stored.
     #[clap(long, env)]
     db_dir: PathBuf,
 }
