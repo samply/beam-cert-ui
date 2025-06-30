@@ -38,7 +38,7 @@ The service is configured via command-line arguments or environment variables.
 
 | Argument | Environment Variable | Default | Description |
 |---|---|---|---|
-| `--vault-token` | `VAULT_TOKEN` | | Token for authenticating with Hashicorp Vault. |
+| `--vault-token-file` | `VAULT_TOKEN_FILE` | `/run/secrets/pki.secret` | File containing the token for authenticating with the Vault. |
 | `--vault-url` | `VAULT_URL` | | URL of the Vault server. |
 | `--broker-url` | `BROKER_URL` | | URL of the Beam Broker this manager serves. |
 | `--broker-id` | `BROKER_ID` | | The BeamID of the broker, used to validate CSRs. |
