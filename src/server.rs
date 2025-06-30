@@ -115,7 +115,7 @@ static VAULT_CLIENT: LazyLock<Client> = LazyLock::new(|| {
         .default_headers(
             [(
                 HeaderName::from_static("x-vault-token"),
-                HeaderValue::from_str(&std::fs::read_to_string(&CONFIG.vault_token_file).expect("Failed to read vault token")).unwrap(),
+                HeaderValue::from_str(std::fs::read_to_string(&CONFIG.vault_token_file).expect("Failed to read vault token").trim()).unwrap(),
             )]
             .into_iter()
             .collect(),
