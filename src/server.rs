@@ -38,8 +38,8 @@ use crate::{OnlineStatus, ProxyStatus, SiteInfo};
 #[derive(Debug, Parser)]
 pub struct Config {
     /// The vault token used to access the PKI secrets.
-    #[clap(long, env)]
-    vault_token: String,
+    #[clap(long, env, default_value = "/run/secrets/pki.secret")]
+    vault_token_file: PathBuf,
 
     /// The URL of the vault server.
     #[clap(long, env)]
@@ -115,7 +115,7 @@ static VAULT_CLIENT: LazyLock<Client> = LazyLock::new(|| {
         .default_headers(
             [(
                 HeaderName::from_static("x-vault-token"),
-                HeaderValue::from_str(&CONFIG.vault_token).unwrap(),
+                HeaderValue::from_str(&std::fs::read_to_string(&CONFIG.vault_token_file).expect("Failed to read vault token")).unwrap(),
             )]
             .into_iter()
             .collect(),
