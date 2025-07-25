@@ -94,7 +94,17 @@ pub struct Config {
     /// Directory where the local database of this service is stored.
     #[clap(long, env)]
     db_dir: PathBuf,
+
+    /// The email template used for the invitation email.
+    /// The template should contain the placeholders `SITE_ID`, `URL` and `TOKEN` which will be replaced accordingly.
+    #[clap(long, env, default_value = DEFAULT_EMAIL_TEMPLATE)]
+    email_template: String,
 }
+
+const DEFAULT_EMAIL_TEMPLATE: &str = "\
+    You have been invited to register a bridgehead named SITE_ID with the beam network.\n\
+    After enrolling your bridgehead you can submit your CSR here:\n\
+    URL with the following token 'TOKEN'";
 
 fn parse_eth_ttl(string: &str) -> anyhow::Result<Duration> {
     let span: Span = string.parse()?;
@@ -582,12 +592,7 @@ pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<()> {
     let mail = Message::builder()
         .to(email.parse()?)
         .from(from)
-        .body(format!(
-            "You have been invited to register as bridgehead named {site_id} with the beam network.\n\
-            After enrolling your bridgehead you can submit your CSR here:\n\
-            {} with the following token '{token}'",
-            CONFIG.public_base_url
-        ))?;
+        .body(format_email(token, site_id))?;
     let res = EMAIL_CLIENT.send(mail).await?;
     tracing::debug!(?res);
     CERTS.insert(
@@ -599,6 +604,13 @@ pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<()> {
         },
     )?;
     Ok(())
+}
+
+fn format_email(token: &str, site_id: &str) -> String {
+    CONFIG.email_template
+        .replace("SITE_ID", site_id)
+        .replace("URL", &CONFIG.public_base_url.to_string())
+        .replace("TOKEN", token)
 }
 
 pub trait CertExt {

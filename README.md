@@ -52,3 +52,4 @@ The service is configured via command-line arguments or environment variables.
 | `--smtp-url` | `SMTP_URL` | | URL of the SMTP server for sending emails. |
 | `--csr-dir` | `CSR_DIR` | `/csr` | Directory to store submitted Certificate Signing Requests. |
 | `--db-dir` | `DB_DIR` | | Directory to store the application's local database. |
+| `--email-template` | `EMAIL_TEMPLATE` | See `DEFAULT_EMAIL_TEMPLATE` in `server.rs` | The email template used for the invitation email. The template should contain the placeholders `SITE_ID`, `URL` and `TOKEN` which will be replaced accordingly. |
