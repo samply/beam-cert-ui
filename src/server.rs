@@ -592,7 +592,7 @@ pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<()> {
     let mail = Message::builder()
         .to(email.parse()?)
         .from(from)
-        .body(format_email(token, site_id))?;
+        .body(format_email(&token, site_id))?;
     let res = EMAIL_CLIENT.send(mail).await?;
     tracing::debug!(?res);
     CERTS.insert(
