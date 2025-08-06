@@ -91,7 +91,7 @@ fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
                         let proxy_id = proxy_id.to_owned();
                         async move {
                             if let Err(e) = remove_site(proxy_id).await {
-                                tracing::error!("Failed to invite site: {e:#}");
+                                tracing::error!("Failed to remove site: {e:#}");
                             };
                             sites.restart();
                         } },
@@ -144,7 +144,7 @@ fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
                     let proxy_id = proxy_id.to_owned();
                     async move {
                         if let Err(e) = remove_site(proxy_id).await {
-                            tracing::error!("Failed to invite site: {e:#}");
+                            tracing::error!("Failed to remove site: {e:#}");
                         };
                         sites.restart();
                     } },

@@ -251,6 +251,12 @@ impl CertDb {
         Ok(cert)
     }
 
+    async fn remove(&self, proxy_id: &str) -> anyhow::Result<Option<DbCert>> {
+        let rem = self.0.remove(proxy_id.as_bytes())?;
+        self.0.flush_async().await?;
+        Ok(rem.map(|cert| serde_json::from_slice(&cert)).transpose()?)
+    }
+
     fn insert(&self, proxy_id: &str, cert: &DbCert) -> anyhow::Result<()> {
         self.0
             .insert(proxy_id.as_bytes(), serde_json::to_vec(cert)?)?;
@@ -530,12 +536,18 @@ pub async fn register_new_csr(email: &str, csr: &str, expected_proxy_id: &str) -
 }
 
 pub async fn remove_site(proxy_id: &str) -> anyhow::Result<()> {
+    if let Some(DbCert::Pending { .. }) = CERTS.remove(proxy_id).await? {
+        return Ok(());
+    };
     let proxy_name = proxy_id
         .split_once('.')
         .ok_or(anyhow!("Invalid proxy id"))?
         .0;
-    let _ = tokio::fs::remove_file(CONFIG.csr_dir.join(&format!("{proxy_name}.csr"))).await;
-    let _ = CERTS.0.remove(proxy_id.as_bytes());
+    let old_dir = CONFIG.csr_dir.join("old");
+    tokio::fs::create_dir_all(&old_dir).await?;
+    let csr_file = CONFIG.csr_dir.join(format!("{proxy_name}.csr"));
+    tokio::fs::copy(&csr_file, old_dir.join(format!("{proxy_name}.csr"))).await?;
+    tokio::fs::remove_file(csr_file).await?;
     let pems = get_all_vault_pems().await?;
     for pem in pems {
         let Ok(cert) = pem.parse_x509() else {
