@@ -75,7 +75,7 @@ fn Status() -> Element {
 
 fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
     let proxy_name = site.proxy_id.split_once('.').unwrap().0.to_owned();
-    let proxy_id = site.proxy_id.clone();
+    let proxy_id = CopyValue::new(site.proxy_id.clone());
     let email = site.email.as_deref().unwrap_or("Unknown").to_owned();
     let now = Zoned::now();
     let span_round = SpanRound::new().days_are_24_hours().smallest(jiff::Unit::Hour).largest(jiff::Unit::Year).relative(&now);
@@ -87,14 +87,12 @@ fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
                 td { colspan: "3", "Waiting on CSR" }
                 td {
                     class: "actions",
-                    button { onclick: move |_| {
-                        let proxy_id = proxy_id.to_owned();
-                        async move {
-                            if let Err(e) = remove_site(proxy_id).await {
+                    button { onclick: move |_| async move {
+                            if let Err(e) = remove_site(proxy_id.read().to_string()).await {
                                 tracing::error!("Failed to remove site: {e:#}");
                             };
                             sites.restart();
-                        } },
+                        },
                         i { class: "fa-solid fa-trash" }
                     }
                     button { onclick: move |_| {
@@ -110,15 +108,15 @@ fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
                     }
                 }
             },
-            ProxyStatus::Registered { online, cert_expires_in, expiration_time } => rsx! {
+            ProxyStatus::Registered { online, cert_expires_in, resign_until } => rsx! {
                 {
                     let expires_in = cert_expires_in.round(span_round).unwrap();
                     rsx! { td { "{expires_in:#}" } }
                 }
                 {
-                    let dt = expiration_time - &now;
+                    let dt = resign_until - &now;
                     let is_short = dt.compare(SpanCompare::from(1.week()).days_are_24_hours()).unwrap().is_lt();
-                    let dt_fmt = expiration_time.strftime("%F");
+                    let dt_fmt = resign_until.strftime("%F");
                     rsx! { td { class: is_short.then_some("cert-warning"), "{dt_fmt:#}" } }
                 }
                 match online {
@@ -140,15 +138,23 @@ fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
                         }
                     } },
                 }
-                td { button { onclick: move |_| {
-                    let proxy_id = proxy_id.to_owned();
-                    async move {
-                        if let Err(e) = remove_site(proxy_id).await {
-                            tracing::error!("Failed to remove site: {e:#}");
+                td {
+                    class: "actions",
+                    button { onclick: move |_| async move {
+                            if let Err(e) = remove_site(proxy_id.read().to_string()).await {
+                                tracing::error!("Failed to remove site: {e:#}");
+                            };
+                            sites.restart();
+                        },
+                        i { class: "fa-solid fa-trash" }
+                    }
+                    button { onclick: move |_| async move {
+                        if let Err(e) = extend_validity(proxy_id.read().to_string()).await {
+                            tracing::error!("Failed to extend validity: {e:#}");
                         };
                         sites.restart();
-                    } },
-                    i { class: "fa-solid fa-trash" }
+                    },
+                    i { class: "fa-solid fa-plus" }
                 } }
             },
         }
@@ -170,12 +176,17 @@ async fn remove_site(proxy_id: String) -> Result<(), ServerFnError> {
     server::remove_site(&proxy_id).await.inspect_err(|e| tracing::warn!(%e)).map_err(ServerFnError::new)
 }
 
+#[server]
+async fn extend_validity(proxy_id: String) -> Result<(), ServerFnError> {
+    server::extend_validity(&proxy_id).await.inspect_err(|e| tracing::warn!(%e)).map_err(ServerFnError::new)
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ProxyStatus {
     WaitingOnCsr,
     Registered {
         online: OnlineStatus,
-        expiration_time: Zoned,
+        resign_until: Zoned,
         cert_expires_in: Span,
     }
 }

@@ -11,7 +11,7 @@ use std::{
 use anyhow::{Context, anyhow, bail};
 use axum::{body::Bytes, routing::get, Router};
 use clap::Parser;
-use dioxus::logger::tracing;
+use dioxus::{html::tr, logger::tracing};
 use dioxus::prelude::*;
 use futures_util::{FutureExt, TryFutureExt, ready};
 use jiff::{Span, SpanRelativeTo, ToSpan, Zoned};
@@ -168,6 +168,14 @@ pub async fn launch() -> anyhow::Result<()> {
                 tracing::debug!("Skipping signing of faulty cert for {}", expired.get_ref());
                 continue;
             }
+            let Ok(DbCert::Enrolled { resign_until, .. }) = CERTS.get_or_create(expired.get_ref()).await else {
+                tracing::warn!("Failed to get cert info for {}", expired.get_ref());
+                continue;
+            };
+            if resign_until < Zoned::now() {
+                tracing::warn!("Cert for {} has expired but and is not scheduled for resigning", expired.get_ref());
+                continue;
+            }
             if let Err(e) = tokio::fs::read(CONFIG.csr_dir.join(format!(
                 "{}.csr",
                 expired.get_ref().split_once('.').unwrap().0
@@ -199,7 +207,13 @@ async fn update_expiration_queue() -> anyhow::Result<()> {
     let newest_certs = get_newest_cert_per_cn(&pems, CertificateRevocationList::from_der(&crl)?.1)?;
     let mut certs_queue = CERT_WAIT_QUEUE.lock().await;
     certs_queue.clear();
-    newest_certs.into_iter().for_each(|(proxy_id, cert)| {
+    for (proxy_id, cert) in newest_certs {
+        // Skip certs that are already enrolled and should not be renewed
+        if CERTS.get_or_create(&proxy_id).await
+            .map(|cert| matches!(cert, DbCert::Enrolled { resign_until, .. } if resign_until < Zoned::now()))
+            .unwrap_or(false) {
+            continue;
+        }
         certs_queue.insert(
             proxy_id,
             get_ttl(&cert)
@@ -208,7 +222,7 @@ async fn update_expiration_queue() -> anyhow::Result<()> {
                 .unwrap_or(Duration::ZERO)
                 .saturating_sub(CERT_RENEW_THRESHOLD),
         );
-    });
+    }
     Ok(())
 }
 
@@ -242,7 +256,7 @@ impl CertDb {
         };
         let cert = DbCert::Enrolled {
             email,
-            expiration_time: &Zoned::now() + 1.year(),
+            resign_until: &Zoned::now() + 1.year(),
             first_insert: Zoned::now(),
         };
         self.0
@@ -287,7 +301,7 @@ enum DbCert {
     },
     Enrolled {
         email: Option<String>,
-        expiration_time: Zoned,
+        resign_until: Zoned,
         first_insert: Zoned,
     },
 }
@@ -400,26 +414,26 @@ pub async fn get_certs() -> anyhow::Result<Vec<SiteInfo>> {
                 let db_cert = CERTS
                     .get_or_create(&proxy_id)
                     .await?;
-                let expiration_time = match &db_cert {
+                let resign_until = match &db_cert {
                     DbCert::Pending { email, sent, .. } => {
                         tracing::warn!("We are waiting on a csr from {email} for {proxy_id} but it is already enrolled. Setting it up for auto resigning");
-                        let expiration_time = sent + 1.year();
+                        let resign_until = sent + 1.year();
                         let cert = DbCert::Enrolled {
                             email: Some(email.clone()),
-                            expiration_time: expiration_time.clone(),
+                            resign_until: resign_until.clone(),
                             first_insert: Zoned::now(),
                         };
                         CERTS.insert(&proxy_id, &cert)?;
-                        expiration_time
+                        resign_until
                     }
-                    DbCert::Enrolled { expiration_time, .. } => expiration_time.clone(),
+                    DbCert::Enrolled { resign_until, .. } => resign_until.clone(),
                 };
                 let info = SiteInfo {
                     proxy_id: proxy_id.clone(),
                     email: cert.subject.get_email()?.or(db_cert.get_email()).map(Into::into),
                     proxy_status: ProxyStatus::Registered {
                         online: get_online_status(&proxy_id).await?,
-                        expiration_time,
+                        resign_until,
                         cert_expires_in: get_ttl(&cert)?
                     },
                 };
@@ -526,7 +540,7 @@ pub async fn register_new_csr(email: &str, csr: &str, expected_proxy_id: &str) -
         cn,
         &DbCert::Enrolled {
             email: Some(email.into()),
-            expiration_time: &Zoned::now() + 1.year(),
+            resign_until: &Zoned::now() + 1.year(),
             first_insert: Zoned::now(),
         },
     )?;
@@ -567,6 +581,24 @@ pub async fn remove_site(proxy_id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tracing::instrument]
+pub async fn extend_validity(proxy_id: &str) -> anyhow::Result<()> {
+    let cert = CERTS.get_or_create(proxy_id).await?;
+    let DbCert::Enrolled { email, resign_until, first_insert } = cert else {
+        tracing::warn!("Cannot extend validity of a pending certificate");
+        return Ok(());
+    };
+    CERTS.insert(
+        proxy_id,
+        &DbCert::Enrolled {
+            email,
+            resign_until: &resign_until + 6.months(),
+            first_insert,
+        },
+    )?;
+    Ok(())
+}
+
 async fn revoke_serial(serial: &str) -> anyhow::Result<()> {
     VAULT_CLIENT
         .post(
@@ -593,6 +625,9 @@ static EMAIL_CLIENT: LazyLock<lettre::AsyncSmtpTransport<lettre::Tokio1Executor>
 #[tracing::instrument]
 pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<()> {
     let proxy_id = format!("{site_id}.{}", CONFIG.broker_id);
+    if CERTS.0.contains_key(proxy_id.as_bytes())? {
+        bail!("Site {site_id} already exists, skipping invite");
+    }
     let token: String = generate_secret::<16>();
     let user_name = CONFIG.smtp_url.username();
     let from = format!(
