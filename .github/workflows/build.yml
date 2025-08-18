@@ -35,6 +35,8 @@ jobs:
         push-to: 'dockerhub'
         build-platforms: "linux/amd64"
         artifact-name: "beam-cert-manager-binary"
+        # We don't use ghcr
+        ghcr-retention-policy: "keep"
     secrets:
         DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
