@@ -36,13 +36,18 @@ fn Status() -> Element {
     let mut sites_resource = use_server_future(get_status)?;
     rsx! {
         div { id: "status",
+            div {
+                id: "status-header",
+                h2 { "Beam Cert UI" }
+                button { class: "", onclick: move |_| sites_resource.restart(), i { class: "fa-solid fa-arrows-rotate" } }
+            }
             if let Some(Ok(sites)) = sites_resource.value().read().deref() {
                 table {
                     thead { tr {
                         th { "Site ID" }
                         th { "Contact" }
                         th { "Ephemeral expiration" }
-                        th { "Verified until" }
+                        th { "Auto renew until" }
                         th { "Online" }
                         th { "Action" }
                     } }
@@ -53,22 +58,21 @@ fn Status() -> Element {
                     }
                 }
             }
-            button { onclick: move |_| sites_resource.restart(), "Refresh" }
-            form { class: "enroll", onsubmit: move |e| async move {
-                    // TODO: clear form on invite
-                    e.prevent_default();
-                    let email = e.data.values().get("email").map(FormValue::as_value).unwrap_or_default();
-                    let site_id = e.data.values().get("site_id").map(FormValue::as_value).unwrap_or_default();
-                    if let Err(e) = invite_site(email, site_id).await {
-                        tracing::error!("Failed to invite site: {e:#}");
-                        return;
-                    };
-                    sites_resource.restart();
-                },
-                input { r#type: "text", name: "site_id", placeholder: "Site ID", required: true }
-                input { r#type: "email", name: "email", placeholder: "Admin Email", required: true }
-                input { r#type: "submit", value: "✉ Invite via e-mail to enroll" }
-            }
+        }
+        form { class: "enroll", onsubmit: move |e| async move {
+                // TODO: clear form on invite
+                e.prevent_default();
+                let email = e.data.values().get("email").map(FormValue::as_value).unwrap_or_default();
+                let site_id = e.data.values().get("site_id").map(FormValue::as_value).unwrap_or_default();
+                if let Err(e) = invite_site(email, site_id).await {
+                    tracing::error!("Failed to invite site: {e:#}");
+                    return;
+                };
+                sites_resource.restart();
+            },
+            input { r#type: "text", name: "site_id", placeholder: "Site ID", required: true }
+            input { r#type: "email", name: "email", placeholder: "Admin Email", required: true }
+            input { r#type: "submit", value: "✉ Invite via e-mail to enroll" }
         }
     }
 }
