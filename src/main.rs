@@ -40,7 +40,7 @@ fn Status() -> Element {
         div { id: "status",
             div {
                 id: "status-header",
-                h2 { "Beam Cert UI" }
+                h2 { "Beam Cert Manager" }
                 button { class: "", onclick: move |_| sites_resource.restart(), i { class: "fa-solid fa-arrows-rotate" } }
             }
             if let Some(Ok(sites)) = sites_resource.value().read().deref() {
