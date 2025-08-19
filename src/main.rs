@@ -3,7 +3,7 @@ mod server;
 
 use std::ops::Deref;
 
-use dioxus::{logger::tracing::{self}, prelude::*};
+use dioxus::{html::form::name, logger::tracing::{self}, prelude::*};
 use jiff::{SignedDuration, Span, SpanCompare, SpanRound, ToSpan, Zoned};
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +34,8 @@ fn App() -> Element {
 #[component]
 fn Status() -> Element {
     let mut sites_resource = use_server_future(get_status)?;
+    let mut site_id = use_signal(String::new);
+    let mut email = use_signal(String::new);
     rsx! {
         div { id: "status",
             div {
@@ -60,18 +62,17 @@ fn Status() -> Element {
             }
         }
         form { class: "enroll", onsubmit: move |e| async move {
-                // TODO: clear form on invite
                 e.prevent_default();
-                let email = e.data.values().get("email").map(FormValue::as_value).unwrap_or_default();
-                let site_id = e.data.values().get("site_id").map(FormValue::as_value).unwrap_or_default();
-                if let Err(e) = invite_site(email, site_id).await {
+                if let Err(e) = invite_site(email.read().to_owned(), site_id.read().to_owned()).await {
                     tracing::error!("Failed to invite site: {e:#}");
                     return;
                 };
+                email.set(String::new());
+                site_id.set(String::new());
                 sites_resource.restart();
             },
-            input { r#type: "text", name: "site_id", placeholder: "Site ID", required: true }
-            input { r#type: "email", name: "email", placeholder: "Admin Email", required: true }
+            input { r#type: "text", name: "site_id", placeholder: "Site ID", required: true, oninput: move |event| site_id.set(event.value()), value: "{site_id}" }
+            input { r#type: "email", name: "email", placeholder: "Admin Email", required: true, oninput: move |event| email.set(event.value()), value: "{email}" }
             input { r#type: "submit", value: "✉ Invite via e-mail to enroll" }
         }
     }
