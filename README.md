@@ -30,7 +30,7 @@ The Certificate Manager operates as a central service alongside the Beam.Broker 
 
 The Certificate Manager is designed to be run as a Docker container. It requires configuration to connect to your existing Beam.Broker, Hashicorp Vault, and an SMTP server for sending email notifications.
 
-The [beam-deploy](https://github.com/samply/beam-delpoy) repo contains an example docker compose that shows how one might run this service in production using traefik to authenticate the administrators interface. 
+The [beam-deploy](https://github.com/samply/beam-deploy) repo contains an example docker compose that shows how one might run this service in production using traefik to authenticate the administrators interface. 
 
 ## Configuration
 
