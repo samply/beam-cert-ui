@@ -2,6 +2,8 @@
 
 The Samply.Beam Certificate Manager is a companion service for [Samply.Beam](https://github.com/samply/beam) that automates the Public Key Infrastructure (PKI) lifecycle for a Beam network. It simplifies and secures the process of enrolling new beam proxies and ensures the continuous operation of the network by automatically renewing expiring certificates.
 
+<img width="2542" height="430" alt="image" src="https://github.com/user-attachments/assets/9e2954de-cdd2-418b-af0c-6cc8894d5f9e" />
+
 ## Why use the Certificate Manager?
 
 A Samply.Beam network relies on a robust PKI managed by a central [Hashicorp Vault](https://www.vaultproject.io/) instance. While Samply.Beam provides tools like `beam-enroll` to help site administrators generate keys and Certificate Signing Requests (CSRs), the process of signing these CSRs and renewing certificates can be a manual burden for the network operators.
