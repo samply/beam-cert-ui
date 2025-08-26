@@ -23,7 +23,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[component]
 fn App() -> Element {
     rsx! {
-        document::Script { src: "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/js/all.min.js" }
+        document::Script {
+            src: "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/js/all.min.js",
+            integrity: "sha512-uKQ39gEGiyUJl4AI6L+ekBdGKpGw4xJ55+xyJG7YFlJokPNYegn9KwQ3P8A7aFQAUtUsAQHep+d/lrGqrbPIDQ==",
+            crossorigin: "anonymous"
+        }
         document::Link { rel: "icon", href: FAVICON }
         document::Link { rel: "stylesheet", href: MAIN_CSS }
         Status {} 
