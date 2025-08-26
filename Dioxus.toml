@@ -5,20 +5,4 @@ name = "beam-cert-manager"
 
 [web.app]
 
-# HTML title tag content
-title = "beam-cert-manager"
-
-# include `assets` in web platform
-[web.resource]
-
-# Additional CSS style files
-style = []
-
-# Additional JavaScript files
-script = []
-
-[web.resource.dev]
-
-# Javascript code file
-# serve: [dev-server] only
-script = []
+title = "Beam Cert Manager"

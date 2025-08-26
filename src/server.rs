@@ -11,7 +11,7 @@ use std::{
 use anyhow::{Context, anyhow, bail};
 use axum::{body::Bytes, routing::get, Router};
 use clap::Parser;
-use dioxus::{html::tr, logger::tracing};
+use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use futures_util::{FutureExt, TryFutureExt, ready};
 use jiff::{Span, SpanRelativeTo, ToSpan, Zoned};

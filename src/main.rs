@@ -3,7 +3,7 @@ mod server;
 
 use std::ops::Deref;
 
-use dioxus::{html::{col, form::name}, logger::tracing::{self}, prelude::*};
+use dioxus::{logger::tracing::{self}, prelude::*};
 use jiff::{SignedDuration, Span, SpanCompare, SpanRound, ToSpan, Zoned};
 use serde::{Deserialize, Serialize};
 
@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[component]
 fn App() -> Element {
     rsx! {
-        script { src: "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/js/all.min.js" }
+        document::Script { src: "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/js/all.min.js" }
         document::Link { rel: "icon", href: FAVICON }
         document::Link { rel: "stylesheet", href: MAIN_CSS }
         Status {} 
