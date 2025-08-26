@@ -32,6 +32,7 @@ fn App() -> Element {
 
 #[component]
 fn Status() -> Element {
+    let broker_id = use_server_future(get_broker_id)?.read().to_owned().unwrap().unwrap_or_default();
     let mut sites_resource = use_server_future(get_status)?;
     let mut site_id = use_signal(String::new);
     let mut email = use_signal(String::new);
@@ -39,7 +40,7 @@ fn Status() -> Element {
         div { id: "status",
             div {
                 id: "status-header",
-                h2 { "Beam Cert Manager" }
+                h2 { "{broker_id} Cert Manager" }
                 button { class: "", onclick: move |_| sites_resource.restart(), i { class: "fa-solid fa-arrows-rotate" } }
             }
             if let Some(Ok(sites)) = sites_resource.value().read().deref() {
@@ -49,7 +50,7 @@ fn Status() -> Element {
                         th { "Contact" }
                         th { "Ephemeral expiration" }
                         th { "Auto renew until" }
-                        th { "Online" }
+                        th { "Last seen" }
                         th { "Action" }
                     } }
                     tbody {
@@ -192,6 +193,11 @@ async fn remove_site(proxy_id: String) -> Result<(), ServerFnError> {
 #[server]
 async fn extend_validity(proxy_id: String) -> Result<(), ServerFnError> {
     server::extend_validity(&proxy_id).await.inspect_err(|e| tracing::warn!(%e)).map_err(ServerFnError::new)
+}
+
+#[server]
+async fn get_broker_id() -> Result<String, ServerFnError> {
+    Ok(server::CONFIG.broker_id.clone())
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

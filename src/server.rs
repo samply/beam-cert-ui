@@ -51,7 +51,7 @@ pub struct Config {
 
     /// Beam broker id, used to verify the csr common name.
     #[clap(long, env)]
-    broker_id: String,
+    pub broker_id: String,
 
     /// The public base URL of this service, used for generating the link in the email.
     #[clap(long, env)]
@@ -119,7 +119,7 @@ fn parse_eth_ttl(string: &str) -> anyhow::Result<Duration> {
     Ok(new_cert_ttl)
 }
 
-static CONFIG: LazyLock<Config> = LazyLock::new(Config::parse);
+pub static CONFIG: LazyLock<Config> = LazyLock::new(Config::parse);
 static VAULT_CLIENT: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
         .default_headers(
