@@ -114,17 +114,9 @@ th {
     font-weight: bold;
 }
 
-.enroll {
-    width: fit-content;
-    padding: 20px;
-    border-radius: 8px;
-    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
-}
-
 .enroll > input {
-    width: 100%;
+    width: 16rem;
     padding: 10px;
-    margin: 10px 0;
     border: 1px solid #ccc;
     border-radius: 5px;
     box-sizing: border-box;
@@ -139,20 +131,7 @@ button {
     cursor: pointer;
 }
 
-input[type="submit"] {
-    padding: 10px;
-    background: blue;
-    color: white;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-}
-
 button:hover {
-    background: darkblue;
-}
-
-input[type="submit"]:hover {
     background: darkblue;
 }
 

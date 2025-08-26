@@ -3,7 +3,7 @@ mod server;
 
 use std::ops::Deref;
 
-use dioxus::{html::form::name, logger::tracing::{self}, prelude::*};
+use dioxus::{html::{col, form::name}, logger::tracing::{self}, prelude::*};
 use jiff::{SignedDuration, Span, SpanCompare, SpanRound, ToSpan, Zoned};
 use serde::{Deserialize, Serialize};
 
@@ -30,7 +30,6 @@ fn App() -> Element {
     }
 }
 
-/// Echo component that demonstrates fullstack server functions.
 #[component]
 fn Status() -> Element {
     let mut sites_resource = use_server_future(get_status)?;
@@ -57,23 +56,32 @@ fn Status() -> Element {
                         for site_info in sites {
                             tr { key: "{site_info.proxy_id}", { render_site(site_info, sites_resource) } }
                         }
+                        tr {
+                            key: "enroll",
+                            td {
+                                class: "enroll",
+                                input { r#type: "text", name: "site_id", placeholder: "Site ID", required: true, oninput: move |event| site_id.set(event.value()), value: "{site_id}" }
+                            }
+                            td {
+                                colspan: "4", class: "enroll",
+                                input { r#type: "email", name: "email", placeholder: "Admin Email", required: true, oninput: move |event| email.set(event.value()), value: "{email}" }
+                            }
+                            td { class: "actions",
+                                button { onclick: move |_| async move {
+                                    if let Err(e) = invite_site(email.read().to_owned(), site_id.read().to_owned()).await {
+                                        tracing::error!("Failed to invite site: {e:#}");
+                                        return;
+                                    };
+                                    email.set(String::new());
+                                    site_id.set(String::new());
+                                    sites_resource.restart();
+                                },
+                                i { class: "fa-solid fa-paper-plane" } }
+                            }
+                        }
                     }
                 }
             }
-        }
-        form { class: "enroll", onsubmit: move |e| async move {
-                e.prevent_default();
-                if let Err(e) = invite_site(email.read().to_owned(), site_id.read().to_owned()).await {
-                    tracing::error!("Failed to invite site: {e:#}");
-                    return;
-                };
-                email.set(String::new());
-                site_id.set(String::new());
-                sites_resource.restart();
-            },
-            input { r#type: "text", name: "site_id", placeholder: "Site ID", required: true, oninput: move |event| site_id.set(event.value()), value: "{site_id}" }
-            input { r#type: "email", name: "email", placeholder: "Admin Email", required: true, oninput: move |event| email.set(event.value()), value: "{email}" }
-            input { r#type: "submit", value: "✉ Invite via e-mail to enroll" }
         }
     }
 }
