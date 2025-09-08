@@ -5,13 +5,15 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  checks: write
 
 jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v1
-      - uses: actions-rs/audit-check@v1
+      - uses: actions/checkout@v5
+      - uses: rustsec/audit-check@v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
