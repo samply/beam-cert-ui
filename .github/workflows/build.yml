@@ -37,7 +37,6 @@ jobs:
     uses: samply/github-workflows/.github/workflows/docker-ci.yml@main
     with:
         image-name: "samply/beam-cert-manager"
-        push-to: 'dockerhub'
         build-platforms: "linux/amd64"
         artifact-name: "beam-cert-manager-binary"
         # We don't use ghcr
