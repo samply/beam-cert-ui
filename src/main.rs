@@ -57,9 +57,6 @@ fn Status() -> Element {
                         th { "Action" }
                     } }
                     tbody {
-                        for site_info in sites {
-                            tr { key: "{site_info.proxy_id}", { render_site(site_info, sites_resource) } }
-                        }
                         tr {
                             key: "enroll",
                             td {
@@ -82,6 +79,9 @@ fn Status() -> Element {
                                 },
                                 i { class: "fa-solid fa-paper-plane" } }
                             }
+                        }
+                        for site_info in sites {
+                            tr { key: "{site_info.proxy_id}", { render_site(site_info, sites_resource) } }
                         }
                     }
                 }
