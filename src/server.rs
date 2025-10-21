@@ -265,6 +265,14 @@ impl CertDb {
         Ok(cert)
     }
 
+    fn get(&self, proxy_id: &str) -> anyhow::Result<Option<DbCert>> {
+        if let Some(cert_info) = self.0.get(proxy_id)? {
+            Ok(Some(serde_json::from_slice(&cert_info)?))
+        } else {
+            Ok(None)
+        }
+    }
+
     async fn remove(&self, proxy_id: &str) -> anyhow::Result<Option<DbCert>> {
         let rem = self.0.remove(proxy_id.as_bytes())?;
         self.0.flush_async().await?;
@@ -625,10 +633,11 @@ static EMAIL_CLIENT: LazyLock<lettre::AsyncSmtpTransport<lettre::Tokio1Executor>
 #[tracing::instrument]
 pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<()> {
     let proxy_id = format!("{site_id}.{}", CONFIG.broker_id);
-    if CERTS.0.contains_key(proxy_id.as_bytes())? {
-        bail!("Site {site_id} already exists, skipping invite");
-    }
-    let token: String = generate_secret::<16>();
+    let token = match CERTS.get(&proxy_id)? {
+        Some(DbCert::Pending { otp , .. }) => otp,
+        Some(DbCert::Enrolled { .. }) => bail!("Site {site_id} is already enrolled"),
+        None => generate_secret::<16>(),
+    };
     let user_name = CONFIG.smtp_url.username();
     let from = format!(
         "{}@{}",
