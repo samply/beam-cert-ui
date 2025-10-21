@@ -145,7 +145,7 @@ fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
                     },
                     OnlineStatus::NeverConnected => rsx!{ td { class: "status-never",
                         i { class: "fas fa-times-circle" }
-                        " Never"
+                        " Offline"
                     } },
                     OnlineStatus::LastSeen(seen) => rsx! { td { class: "status-last-seen",
                         i { class: "fas fa-clock" }
