@@ -62,9 +62,9 @@ th {
     font-weight: bold;
 }
 
-.enroll > input {
+input {
     width: 16rem;
-    padding: 10px;
+    padding: 9px;
     border: 1px solid #ccc;
     border-radius: 5px;
     box-sizing: border-box;

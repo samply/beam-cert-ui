@@ -590,8 +590,35 @@ pub async fn remove_site(proxy_id: &str) -> anyhow::Result<()> {
 }
 
 #[tracing::instrument]
-pub async fn extend_validity(proxy_id: &str) -> anyhow::Result<()> {
-    let cert = CERTS.get_or_create(proxy_id).await?;
+pub fn update_email(proxy_id: &str, new_email: String) -> anyhow::Result<()> {
+    let Some(cert) = CERTS.get(proxy_id)? else {
+        bail!("Certificate not found");
+    };
+    let new_cert = match cert {
+        DbCert::Pending { sent, otp, .. } => DbCert::Pending {
+            email: new_email,
+            sent,
+            otp,
+        },
+        DbCert::Enrolled {
+            resign_until,
+            first_insert,
+            ..
+        } => DbCert::Enrolled {
+            email: Some(new_email),
+            resign_until,
+            first_insert,
+        },
+    };
+    CERTS.insert(proxy_id, &new_cert)?;
+    Ok(())
+}
+
+#[tracing::instrument]
+pub fn extend_validity(proxy_id: &str) -> anyhow::Result<()> {
+    let Some(cert) = CERTS.get(proxy_id)? else {
+        bail!("Certificate not found");
+    };
     let DbCert::Enrolled { email, resign_until, first_insert } = cert else {
         tracing::warn!("Cannot extend validity of a pending certificate");
         return Ok(());

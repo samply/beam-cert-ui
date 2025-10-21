@@ -60,11 +60,10 @@ fn Status() -> Element {
                         tr {
                             key: "enroll",
                             td {
-                                class: "enroll",
                                 input { r#type: "text", name: "site_id", placeholder: "Site ID", required: true, oninput: move |event| site_id.set(event.value()), value: "{site_id}" }
                             }
                             td {
-                                colspan: "4", class: "enroll",
+                                colspan: "4",
                                 input { r#type: "email", name: "email", placeholder: "Admin Email", required: true, oninput: move |event| email.set(event.value()), value: "{email}" }
                             }
                             td { class: "actions",
@@ -93,12 +92,12 @@ fn Status() -> Element {
 fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
     let proxy_name = site.proxy_id.split_once('.').unwrap().0.to_owned();
     let proxy_id = CopyValue::new(site.proxy_id.clone());
-    let email = site.email.as_deref().unwrap_or("Unknown").to_owned();
+    let email = site.email.clone();
     let now = Zoned::now();
     let span_round = SpanRound::new().days_are_24_hours().smallest(jiff::Unit::Hour).largest(jiff::Unit::Year).relative(&now);
     rsx!{
         td { "{proxy_name}" }
-        td { "{email}" }
+        td { EditableEmail { email: email.clone(), proxy_id } }
         match &site.proxy_status {
             ProxyStatus::WaitingOnCsr => rsx!{
                 td { colspan: "3", "Waiting on CSR" }
@@ -114,7 +113,7 @@ fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
                     }
                     button { onclick: move |_| {
                         let proxy_name = proxy_name.to_owned();
-                        let email = email.to_owned();
+                        let email = email.as_ref().unwrap().clone();
                         async move {
                             if let Err(e) = invite_site(email, proxy_name).await {
                                 tracing::error!("Failed to invite site: {e:#}");
@@ -178,6 +177,80 @@ fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
     }
 }
 
+#[component]
+pub fn EditableEmail(email: Option<String>, proxy_id: CopyValue<String>) -> Element {
+    let mut is_editing = use_signal(|| false);
+    let mut email_value = use_signal(|| email.clone());
+    let mut input_value = use_signal(|| email.clone().unwrap_or_default());
+
+    let display_text = email_value()
+        .as_ref()
+        .filter(|e| !e.is_empty())
+        .map(|e| e.as_str())
+        .unwrap_or("Unknown")
+        .to_owned();
+
+    rsx! {
+        if is_editing() {
+            div {
+                style: "display: flex; gap: 8px; justify-content: space-between; align-items: center;",
+                input {
+                    r#type: "email",
+                    value: "{input_value}",
+                    onmounted: move |el| async move {
+                        el.data.set_focus(true).await.unwrap();
+                    },
+                    oninput: move |evt| input_value.set(evt.value().clone()),
+                    style: "width: 66%",
+                    autofocus: true,
+                }
+                div {
+                    style: "display: flex; gap: 8px;",
+                    button {
+                        onclick: move |_| {
+                            let new_email = input_value().trim().to_string();
+                            if !new_email.is_empty() {
+                                email_value.set(Some(new_email.clone()));
+                            } else {
+                                email_value.set(None);
+                            }
+                            is_editing.set(false);
+                            async move {
+                                if let Err(e) = update_email(new_email, proxy_id.read().to_owned()).await {
+                                    tracing::error!("Failed to update email: {e:#}");
+                                };
+                            }
+                        },
+                        i { class: "fa-solid fa-check"}
+                    }
+                    button {
+                        onclick: move |_| {
+                            input_value.set(email_value().unwrap_or_default());
+                            is_editing.set(false);
+                        },
+                        i { class: "fa-solid fa-xmark" }
+                    }
+                }
+            }
+        } else {
+            div {
+                style: "display: flex; align-items: center; gap: 8px; justify-content: space-between;",
+                span {
+                    style: "font-family: monospace;",
+                    "{display_text}"
+                }
+                button {
+                    onclick: move |_| {
+                        input_value.set(email_value().unwrap_or_default());
+                        is_editing.set(true);
+                    },
+                    i { class: "fa-solid fa-pencil" }
+                }
+            }
+        }
+    }
+}
+
 #[server]
 async fn get_status() -> Result<Vec<SiteInfo>, ServerFnError> {
     server::get_certs().await.inspect_err(|e| tracing::warn!(%e)).map_err(ServerFnError::new)
@@ -195,7 +268,12 @@ async fn remove_site(proxy_id: String) -> Result<(), ServerFnError> {
 
 #[server]
 async fn extend_validity(proxy_id: String) -> Result<(), ServerFnError> {
-    server::extend_validity(&proxy_id).await.inspect_err(|e| tracing::warn!(%e)).map_err(ServerFnError::new)
+    server::extend_validity(&proxy_id).inspect_err(|e| tracing::warn!(%e)).map_err(ServerFnError::new)
+}
+
+#[server]
+async fn update_email(new_email: String, proxy_id: String) -> Result<(), ServerFnError> {
+    server::update_email(&proxy_id, new_email).inspect_err(|e| tracing::warn!(%e)).map_err(ServerFnError::new)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
