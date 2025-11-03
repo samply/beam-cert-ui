@@ -11,8 +11,8 @@ use std::{
 use anyhow::{Context, anyhow, bail};
 use axum::{Router, body::Bytes, routing::get};
 use clap::Parser;
+use dioxus::logger::tracing;
 use dioxus::prelude::*;
-use dioxus::{html::g, logger::tracing};
 use futures_util::{FutureExt, TryFutureExt, ready};
 use jiff::{Span, SpanRelativeTo, ToSpan, Zoned};
 use lettre::{AsyncTransport, Message};
@@ -202,14 +202,10 @@ pub async fn launch() -> anyhow::Result<()> {
             }
         }
     });
-
     let admin_listener = TcpListener::bind(CONFIG.admin_addr).await?;
     let public_listener = TcpListener::bind(CONFIG.public_addr).await?;
     tokio::try_join!(
-        axum::serve(
-            admin_listener,
-            Router::new().serve_dioxus_application(ServeConfigBuilder::new(), crate::App)
-        ),
+        axum::serve(admin_listener, dioxus::server::router(crate::App)),
         axum::serve(
             public_listener,
             Router::new().route(

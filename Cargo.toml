@@ -8,11 +8,11 @@ license = "Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-dioxus = { version = "0.6", features = ["fullstack"] }
+dioxus = { version = "0.7", features = ["fullstack"] }
 tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["ansi"] }
 tokio = { version = "1", optional = true }
 tokio-util = { version = "0.7", optional = true, features = ["time"] }
-axum = { version = "0.7", optional = true }
+axum = { version = "0.8", optional = true }
 clap = { version = "4", optional = true, features = ["env", "derive"] }
 reqwest = { version = "0.12", optional = true, default-features = false, features = [
     "json",
