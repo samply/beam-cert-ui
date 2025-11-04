@@ -1,7 +1,7 @@
 use std::{
     cmp::Ordering,
-    collections::{hash_map::Entry, HashMap, HashSet},
-    future::{poll_fn, Future},
+    collections::{HashMap, HashSet, hash_map::Entry},
+    future::{Future, poll_fn},
     net::SocketAddr,
     path::PathBuf,
     sync::LazyLock,
@@ -9,10 +9,10 @@ use std::{
 };
 
 use anyhow::{Context, anyhow, bail};
-use axum::{body::Bytes, routing::get, Router};
+use axum::{Router, body::Bytes, routing::get};
 use clap::Parser;
-use dioxus::{html::g, logger::tracing};
 use dioxus::prelude::*;
+use dioxus::{html::g, logger::tracing};
 use futures_util::{FutureExt, TryFutureExt, ready};
 use jiff::{Span, SpanRelativeTo, ToSpan, Zoned};
 use lettre::{AsyncTransport, Message};
@@ -125,7 +125,12 @@ static VAULT_CLIENT: LazyLock<Client> = LazyLock::new(|| {
         .default_headers(
             [(
                 HeaderName::from_static("x-vault-token"),
-                HeaderValue::from_str(std::fs::read_to_string(&CONFIG.vault_token_file).expect("Failed to read vault token").trim()).unwrap(),
+                HeaderValue::from_str(
+                    std::fs::read_to_string(&CONFIG.vault_token_file)
+                        .expect("Failed to read vault token")
+                        .trim(),
+                )
+                .unwrap(),
             )]
             .into_iter()
             .collect(),
@@ -168,12 +173,17 @@ pub async fn launch() -> anyhow::Result<()> {
                 tracing::debug!("Skipping signing of faulty cert for {}", expired.get_ref());
                 continue;
             }
-            let Ok(DbCert::Enrolled { resign_until, .. }) = CERTS.get_or_create(expired.get_ref()).await else {
+            let Ok(DbCert::Enrolled { resign_until, .. }) =
+                CERTS.get_or_create(expired.get_ref()).await
+            else {
                 tracing::warn!("Failed to get cert info for {}", expired.get_ref());
                 continue;
             };
             if resign_until < Zoned::now() {
-                tracing::warn!("Cert for {} has expired but and is not scheduled for resigning", expired.get_ref());
+                tracing::warn!(
+                    "Cert for {} has expired but and is not scheduled for resigning",
+                    expired.get_ref()
+                );
                 continue;
             }
             if let Err(e) = tokio::fs::read(CONFIG.csr_dir.join(format!(
@@ -196,8 +206,17 @@ pub async fn launch() -> anyhow::Result<()> {
     let admin_listener = TcpListener::bind(CONFIG.admin_addr).await?;
     let public_listener = TcpListener::bind(CONFIG.public_addr).await?;
     tokio::try_join!(
-        axum::serve(admin_listener, Router::new().serve_dioxus_application(ServeConfigBuilder::new(), crate::App)),
-        axum::serve(public_listener, Router::new().route("/", get(submit::submit_csr_page).post(submit::submit_handler)))
+        axum::serve(
+            admin_listener,
+            Router::new().serve_dioxus_application(ServeConfigBuilder::new(), crate::App)
+        ),
+        axum::serve(
+            public_listener,
+            Router::new().route(
+                "/",
+                get(submit::submit_csr_page).post(submit::submit_handler)
+            )
+        )
     )?;
     Ok(())
 }
@@ -384,7 +403,10 @@ fn get_newest_cert_per_cn<'a>(
         let cert = pem.parse_x509()?;
         let cn = cert.subject.get_cn()?.to_owned();
         if !cn.ends_with(&CONFIG.broker_id) {
-            tracing::warn!("Skipping cert with CN {cn} as it does not end with the broker id {}", CONFIG.broker_id);
+            tracing::warn!(
+                "Skipping cert with CN {cn} as it does not end with the broker id {}",
+                CONFIG.broker_id
+            );
             continue;
         }
         if crl
@@ -528,7 +550,11 @@ async fn sign_csr(csr: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn register_new_csr(email: &str, csr: &str, expected_proxy_id: &str) -> anyhow::Result<()> {
+pub async fn register_new_csr(
+    email: &str,
+    csr: &str,
+    expected_proxy_id: &str,
+) -> anyhow::Result<()> {
     let pem = x509_parser::pem::parse_x509_pem(csr.as_bytes())?.1;
     let csr_info = X509CertificationRequest::from_der(&pem.contents)?.1;
     let cn = csr_info.certification_request_info.subject.get_cn()?;
@@ -619,7 +645,12 @@ pub fn extend_validity(proxy_id: &str) -> anyhow::Result<()> {
     let Some(cert) = CERTS.get(proxy_id)? else {
         bail!("Certificate not found");
     };
-    let DbCert::Enrolled { email, resign_until, first_insert } = cert else {
+    let DbCert::Enrolled {
+        email,
+        resign_until,
+        first_insert,
+    } = cert
+    else {
         tracing::warn!("Cannot extend validity of a pending certificate");
         return Ok(());
     };
@@ -661,7 +692,7 @@ static EMAIL_CLIENT: LazyLock<lettre::AsyncSmtpTransport<lettre::Tokio1Executor>
 pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<()> {
     let proxy_id = format!("{site_id}.{}", CONFIG.broker_id);
     let token = match CERTS.get(&proxy_id)? {
-        Some(DbCert::Pending { otp , .. }) => otp,
+        Some(DbCert::Pending { otp, .. }) => otp,
         Some(DbCert::Enrolled { .. }) => bail!("Site {site_id} is already enrolled"),
         None => generate_secret::<16>(),
     };
@@ -690,7 +721,8 @@ pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<()> {
 }
 
 fn format_email(token: &str, site_id: &str) -> String {
-    CONFIG.email_template
+    CONFIG
+        .email_template
         .replace("SITE_ID", site_id)
         .replace("URL", &CONFIG.public_base_url.to_string())
         .replace("TOKEN", token)
@@ -768,10 +800,14 @@ mod submit {
             tracing::error!("Failed to register CSR: {e:#?}");
             return message(&format!("Failed to register CSR: {e:#}"));
         }
-        message(&format!("Successfully registered CSR for {expected_proxy_id} with email {email}. You can now start the bridgehead."))
+        message(&format!(
+            "Successfully registered CSR for {expected_proxy_id} with email {email}. You can now start the bridgehead."
+        ))
     }
 
     fn message(inner: &str) -> Html<String> {
-        Html(format!(r#"<head><style>body {{display: flex; align-items: center; justify-content: center; font-size: 50px; }} div {{ width: 50%; text-align: center }}</style></head><body><div>{inner}</div></body>"#))
+        Html(format!(
+            r#"<head><style>body {{display: flex; align-items: center; justify-content: center; font-size: 50px; }} div {{ width: 50%; text-align: center }}</style></head><body><div>{inner}</div></body>"#
+        ))
     }
 }
