@@ -3,7 +3,10 @@ mod server;
 
 use std::ops::Deref;
 
-use dioxus::{logger::tracing::{self}, prelude::*};
+use dioxus::{
+    logger::tracing::{self},
+    prelude::*,
+};
 use jiff::{SignedDuration, Span, SpanCompare, SpanRound, ToSpan, Zoned};
 use serde::{Deserialize, Serialize};
 
@@ -30,7 +33,7 @@ fn App() -> Element {
         }
         document::Link { rel: "icon", href: FAVICON }
         document::Link { rel: "stylesheet", href: MAIN_CSS }
-        Status {} 
+        Status {}
     }
 }
 
@@ -94,8 +97,12 @@ fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
     let proxy_id = CopyValue::new(site.proxy_id.clone());
     let email = site.email.clone();
     let now = Zoned::now();
-    let span_round = SpanRound::new().days_are_24_hours().smallest(jiff::Unit::Hour).largest(jiff::Unit::Year).relative(&now);
-    rsx!{
+    let span_round = SpanRound::new()
+        .days_are_24_hours()
+        .smallest(jiff::Unit::Hour)
+        .largest(jiff::Unit::Year)
+        .relative(&now);
+    rsx! {
         td { "{proxy_name}" }
         td { EditableEmail { email: email.clone(), proxy_id } }
         match &site.proxy_status {
@@ -253,27 +260,40 @@ pub fn EditableEmail(email: Option<String>, proxy_id: CopyValue<String>) -> Elem
 
 #[server]
 async fn get_status() -> Result<Vec<SiteInfo>, ServerFnError> {
-    server::get_certs().await.inspect_err(|e| tracing::warn!(%e)).map_err(ServerFnError::new)
+    server::get_certs()
+        .await
+        .inspect_err(|e| tracing::warn!(%e))
+        .map_err(ServerFnError::new)
 }
 
 #[server]
 async fn invite_site(email: String, site_id: String) -> Result<(), ServerFnError> {
-    server::invite_site(&email, &site_id).await.inspect_err(|e| tracing::warn!(%e)).map_err(ServerFnError::new)
+    server::invite_site(&email, &site_id)
+        .await
+        .inspect_err(|e| tracing::warn!(%e))
+        .map_err(ServerFnError::new)
 }
 
 #[server]
 async fn remove_site(proxy_id: String) -> Result<(), ServerFnError> {
-    server::remove_site(&proxy_id).await.inspect_err(|e| tracing::warn!(%e)).map_err(ServerFnError::new)
+    server::remove_site(&proxy_id)
+        .await
+        .inspect_err(|e| tracing::warn!(%e))
+        .map_err(ServerFnError::new)
 }
 
 #[server]
 async fn extend_validity(proxy_id: String) -> Result<(), ServerFnError> {
-    server::extend_validity(&proxy_id).inspect_err(|e| tracing::warn!(%e)).map_err(ServerFnError::new)
+    server::extend_validity(&proxy_id)
+        .inspect_err(|e| tracing::warn!(%e))
+        .map_err(ServerFnError::new)
 }
 
 #[server]
 async fn update_email(new_email: String, proxy_id: String) -> Result<(), ServerFnError> {
-    server::update_email(&proxy_id, new_email).inspect_err(|e| tracing::warn!(%e)).map_err(ServerFnError::new)
+    server::update_email(&proxy_id, new_email)
+        .inspect_err(|e| tracing::warn!(%e))
+        .map_err(ServerFnError::new)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -283,7 +303,7 @@ pub enum ProxyStatus {
         online: OnlineStatus,
         resign_until: Zoned,
         cert_expires_in: Span,
-    }
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
