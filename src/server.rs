@@ -758,7 +758,7 @@ pub fn generate_secret<const N: usize>() -> String {
                             0123456789)(*&^%#@!~";
     (0..N)
         .map(|_| {
-            let idx = rand::thread_rng().gen_range(0..CHARSET.len());
+            let idx = rand::rng().random_range(0..CHARSET.len());
             CHARSET[idx] as char
         })
         .collect()
