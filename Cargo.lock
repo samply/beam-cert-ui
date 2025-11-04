@@ -394,7 +394,7 @@ dependencies = [
  "futures-util",
  "jiff",
  "lettre",
- "rand 0.8.5",
+ "rand 0.9.1",
  "reqwest",
  "serde",
  "serde_json",
