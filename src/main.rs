@@ -4,8 +4,7 @@ mod server;
 use std::ops::Deref;
 
 use dioxus::{
-    logger::tracing::{self},
-    prelude::*,
+    document::eval, logger::tracing::{self}, prelude::*
 };
 use jiff::{SignedDuration, Span, SpanCompare, SpanRound, ToSpan, Zoned};
 use serde::{Deserialize, Serialize};
@@ -71,9 +70,11 @@ fn Status() -> Element {
                             }
                             td { class: "actions",
                                 button { onclick: move |_| async move {
-                                    if let Err(e) = invite_site(email.read().to_owned(), site_id.read().to_owned()).await {
-                                        tracing::error!("Failed to invite site: {e:#}");
-                                        return;
+                                    match invite_site(email.read().to_owned(), site_id.read().to_owned()).await {
+                                        Err(err) => tracing::error!("Failed to invite site: {err:#}"),
+                                        Ok(token) => {
+                                            eval(&format!("alert('OTP: {token}')"));
+                                        },
                                     };
                                     email.set(String::new());
                                     site_id.set(String::new());
@@ -122,8 +123,11 @@ fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
                         let proxy_name = proxy_name.to_owned();
                         let email = email.as_ref().unwrap().clone();
                         async move {
-                            if let Err(e) = invite_site(email, proxy_name).await {
-                                tracing::error!("Failed to invite site: {e:#}");
+                            match invite_site(email, proxy_name).await {
+                                Err(err) => tracing::error!("Failed to invite site: {err:#}"),
+                                Ok(token) => {
+                                    eval(&format!("alert('OTP: {token}')"));
+                                },
                             };
                             sites.restart();
                         } },
@@ -267,7 +271,7 @@ async fn get_status() -> Result<Vec<SiteInfo>, ServerFnError> {
 }
 
 #[server]
-async fn invite_site(email: String, site_id: String) -> Result<(), ServerFnError> {
+async fn invite_site(email: String, site_id: String) -> Result<String, ServerFnError> {
     server::invite_site(&email, &site_id)
         .await
         .inspect_err(|e| tracing::warn!(%e))
