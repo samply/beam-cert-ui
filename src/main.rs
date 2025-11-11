@@ -1,5 +1,6 @@
 #[cfg(feature = "server")]
 mod server;
+mod tasks;
 
 use std::ops::Deref;
 
@@ -9,6 +10,8 @@ use dioxus::{
 };
 use jiff::{SignedDuration, Span, SpanCompare, SpanRound, ToSpan, Zoned};
 use serde::{Deserialize, Serialize};
+
+use crate::tasks::Tasks;
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
@@ -33,8 +36,17 @@ fn App() -> Element {
         }
         document::Link { rel: "icon", href: FAVICON }
         document::Link { rel: "stylesheet", href: MAIN_CSS }
-        Status {}
+        Router::<Route> {}
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Routable)]
+enum Route {
+    #[route("/")]
+    Status,
+
+    #[route("/tasks")]
+    Tasks,
 }
 
 #[component]
@@ -185,7 +197,7 @@ fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
 }
 
 #[component]
-pub fn EditableEmail(email: Option<String>, proxy_id: CopyValue<String>) -> Element {
+fn EditableEmail(email: Option<String>, proxy_id: CopyValue<String>) -> Element {
     let mut is_editing = use_signal(|| false);
     let mut email_value = use_signal(|| email.clone());
     let mut input_value = use_signal(|| email.clone().unwrap_or_default());

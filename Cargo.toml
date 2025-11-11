@@ -8,7 +8,7 @@ license = "Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-dioxus = { version = "0.7", features = ["fullstack"] }
+dioxus = { version = "0.7", features = ["fullstack", "router"] }
 tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["ansi"] }
 tokio = { version = "1", optional = true }
 tokio-util = { version = "0.7", optional = true, features = ["time"] }
@@ -32,6 +32,8 @@ futures-util = { version = "0.3", optional = true }
 constant_time_eq = { version = "0.4", optional = true }
 x509-parser = { version = "0.18.0", optional = true }
 jiff = { version = "0.2", features = ["serde"] }
+async-stream = { version = "0.3", optional = true }
+indexmap = "2"
 
 [features]
 default = ["web"]
@@ -50,11 +52,13 @@ server = [
     "dep:futures-util",
     "dep:rand",
     "dep:tracing-subscriber",
+    "dep:async-stream",
     "dioxus/server",
 ]
 web = ["dioxus/web", "jiff/js"]
 desktop = ["dioxus/desktop"]
 mobile = ["dioxus/mobile"]
+async-stream = ["dep:async-stream"]
 
 [profile]
 
