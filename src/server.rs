@@ -685,35 +685,35 @@ static EMAIL_CLIENT: LazyLock<lettre::AsyncSmtpTransport<lettre::Tokio1Executor>
     });
 
 #[tracing::instrument]
-pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<()> {
+pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<String> {
     let proxy_id = format!("{site_id}.{}", CONFIG.broker_id);
     let token = match CERTS.get(&proxy_id)? {
         Some(DbCert::Pending { otp, .. }) => otp,
         Some(DbCert::Enrolled { .. }) => bail!("Site {site_id} is already enrolled"),
         None => generate_secret::<16>(),
     };
-    let user_name = CONFIG.smtp_url.username();
-    let from = format!(
-        "{}@{}",
-        user_name.is_empty().then_some("beam").unwrap_or(user_name),
-        CONFIG.smtp_url.host_str().unwrap()
-    )
-    .parse()?;
-    let mail = Message::builder()
-        .to(email.parse()?)
-        .from(from)
-        .body(format_email(&token, site_id))?;
-    let res = EMAIL_CLIENT.send(mail).await?;
-    tracing::debug!(?res);
+    // let user_name = CONFIG.smtp_url.username();
+    // let from = format!(
+    //     "{}@{}",
+    //     user_name.is_empty().then_some("beam").unwrap_or(user_name),
+    //     CONFIG.smtp_url.host_str().unwrap()
+    // )
+    // .parse()?;
+    // let mail = Message::builder()
+    //     .to(email.parse()?)
+    //     .from(from)
+    //     .body(format_email(&token, site_id))?;
+    // let res = EMAIL_CLIENT.send(mail).await?;
+    // tracing::debug!(?res);
     CERTS.insert(
         &proxy_id,
         &DbCert::Pending {
             email: email.into(),
             sent: Zoned::now(),
-            otp: token.into(),
+            otp: token.clone(),
         },
     )?;
-    Ok(())
+    Ok(token)
 }
 
 fn format_email(token: &str, site_id: &str) -> String {
