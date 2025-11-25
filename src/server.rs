@@ -95,6 +95,10 @@ pub struct Config {
     #[clap(long, env)]
     db_dir: PathBuf,
 
+    /// Broker log directory
+    #[clap(long, env)]
+    pub(crate) broker_log_dir: Option<PathBuf>,
+
     /// The email template used for the invitation email.
     /// The template should contain the placeholders `SITE_ID`, `URL` and `TOKEN` which will be replaced accordingly.
     #[clap(long, env, default_value = DEFAULT_EMAIL_TEMPLATE)]
@@ -119,7 +123,7 @@ fn parse_eth_ttl(string: &str) -> anyhow::Result<Duration> {
     Ok(new_cert_ttl)
 }
 
-static CONFIG: LazyLock<Config> = LazyLock::new(Config::parse);
+pub(crate) static CONFIG: LazyLock<Config> = LazyLock::new(Config::parse);
 static VAULT_CLIENT: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
         .default_headers(

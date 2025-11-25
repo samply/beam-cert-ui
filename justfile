@@ -9,6 +9,7 @@ watch:
     BROKER_URL=http://localhost:8080 \
     VAULT_URL="http://localhost:8200" \
     CSR_DIR="../beam/dev/pki" \
+    BROKER_LOG_DIR="../beam/dev/logs/broker" \
     SMTP_URL="smtp://localhost:1025" \
     DB_DIR="./db" \
     BROKER_MONITORING_KEY="SuperSecretKey" \
