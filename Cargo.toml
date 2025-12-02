@@ -10,6 +10,7 @@ license = "Apache-2.0"
 [dependencies]
 dioxus = { version = "0.7", features = ["fullstack", "router"] }
 tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["ansi"] }
+tracing = { version = "0.1", default-features = false, features = ["attributes"], optional = true }
 tokio = { version = "1", optional = true }
 tokio-util = { version = "0.7", optional = true, features = ["time"] }
 axum = { version = "0.8", optional = true }
@@ -52,6 +53,7 @@ server = [
     "dep:futures-util",
     "dep:rand",
     "dep:tracing-subscriber",
+    "dep:tracing",
     "dep:async-stream",
     "dioxus/server",
 ]
@@ -59,6 +61,7 @@ web = ["dioxus/web", "jiff/js"]
 desktop = ["dioxus/desktop"]
 mobile = ["dioxus/mobile"]
 async-stream = ["dep:async-stream"]
+tracing = ["dep:tracing"]
 
 [profile]
 
