@@ -42,10 +42,10 @@ fn App() -> Element {
 
 #[derive(Clone, Debug, PartialEq, Routable)]
 enum Route {
-    #[route("/")]
+    #[route("/admin")]
     Status,
 
-    #[route("/tasks")]
+    #[route("/admin/tasks")]
     Tasks,
 }
 
