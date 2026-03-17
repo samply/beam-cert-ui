@@ -278,8 +278,8 @@ async fn get_status() -> Result<Vec<SiteInfo>, ServerFnError> {
         .map_err(ServerFnError::new)
 }
 
-#[server]
-async fn invite_site(email: String, site_id: String) -> Result<(), ServerFnError> {
+#[server(endpoint = "invite")]
+async fn invite_site(email: String, site_id: String) -> Result<String, ServerFnError> {
     server::invite_site(&email, &site_id)
         .await
         .inspect_err(|e| tracing::warn!(%e))
