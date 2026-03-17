@@ -687,8 +687,8 @@ static EMAIL_CLIENT: LazyLock<lettre::AsyncSmtpTransport<lettre::Tokio1Executor>
             .build()
     });
 
-#[tracing::instrument]
-pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<()> {
+#[tracing::instrument(err)]
+pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<String> {
     let proxy_id = format!("{site_id}.{}", CONFIG.broker_id);
     let token = match CERTS.get(&proxy_id)? {
         Some(DbCert::Pending { otp, .. }) => otp,
@@ -713,10 +713,10 @@ pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<()> {
         &DbCert::Pending {
             email: email.into(),
             sent: Zoned::now(),
-            otp: token.into(),
+            otp: token.clone(),
         },
     )?;
-    Ok(())
+    Ok(token)
 }
 
 fn format_email(token: &str, site_id: &str) -> String {
