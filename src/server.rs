@@ -4,7 +4,7 @@ use std::{
     future::{Future, poll_fn},
     net::SocketAddr,
     path::PathBuf,
-    sync::LazyLock,
+    sync::{LazyLock, OnceLock},
     time::{Duration, SystemTime},
 };
 
@@ -84,7 +84,7 @@ pub struct Config {
     /// Full URL to the SMTP server including auth, e.g. `smtp://user:password@localhost:587`
     /// Used for sending emails to users when they register a new bridgehead.
     #[clap(long, env)]
-    smtp_url: Url,
+    smtp_url: Option<Url>,
 
     /// Directory where the CSRs for broker registration are used are stored.
     #[clap(long, env, default_value = "/csr")]
@@ -680,13 +680,6 @@ async fn revoke_serial(serial: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-static EMAIL_CLIENT: LazyLock<lettre::AsyncSmtpTransport<lettre::Tokio1Executor>> =
-    LazyLock::new(|| {
-        lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::from_url(&CONFIG.smtp_url.to_string())
-            .expect("Failed to build email client")
-            .build()
-    });
-
 #[tracing::instrument(err)]
 pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<String> {
     let proxy_id = format!("{site_id}.{}", CONFIG.broker_id);
@@ -695,19 +688,28 @@ pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<String> {
         Some(DbCert::Enrolled { .. }) => bail!("Site {site_id} is already enrolled"),
         None => generate_secret::<16>(),
     };
-    let user_name = CONFIG.smtp_url.username();
-    let from = format!(
-        "{}@{}",
-        user_name.is_empty().then_some("beam").unwrap_or(user_name),
-        CONFIG.smtp_url.host_str().unwrap()
-    )
-    .parse()?;
-    let mail = Message::builder()
-        .to(email.parse()?)
-        .from(from)
-        .body(format_email(&token, site_id))?;
-    let res = EMAIL_CLIENT.send(mail).await?;
-    tracing::debug!(?res);
+    if let Some(smtp_url) = &CONFIG.smtp_url {
+        static EMAIL_CLIENT: OnceLock<lettre::AsyncSmtpTransport<lettre::Tokio1Executor>> =
+            OnceLock::new();
+        let client = EMAIL_CLIENT.get_or_init(|| {
+            lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::from_url(&smtp_url.to_string())
+                .expect("Failed to build email client")
+                .build()
+        });
+        let user_name = smtp_url.username();
+        let from = format!(
+            "{}@{}",
+            user_name.is_empty().then_some("beam").unwrap_or(user_name),
+            smtp_url.host_str().unwrap()
+        )
+        .parse()?;
+        let mail = Message::builder()
+            .to(email.parse()?)
+            .from(from)
+            .body(format_email(&token, site_id))?;
+        let res = client.send(mail).await?;
+        tracing::debug!(?res);
+    }
     CERTS.insert(
         &proxy_id,
         &DbCert::Pending {
