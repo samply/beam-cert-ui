@@ -15,7 +15,7 @@ use dioxus::prelude::*;
 use futures_util::{FutureExt, TryFutureExt, ready};
 use jiff::{Span, SpanRelativeTo, ToSpan, Zoned};
 use lettre::{AsyncTransport, Message};
-use rand::Rng;
+use rand::RngExt;
 use reqwest::{
     Client, Method, StatusCode, Url,
     header::{HeaderName, HeaderValue},
