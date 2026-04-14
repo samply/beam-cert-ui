@@ -1,10 +1,11 @@
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet, hash_map::Entry},
-    future::{Future, poll_fn},
+    future::poll_fn,
     net::SocketAddr,
     path::PathBuf,
     sync::{LazyLock, OnceLock},
+    task::Poll,
     time::{Duration, SystemTime},
 };
 
@@ -12,7 +13,7 @@ use anyhow::{Context, anyhow, bail};
 use axum::{Router, body::Bytes, routing::get};
 use clap::Parser;
 use dioxus::prelude::*;
-use futures_util::{FutureExt, TryFutureExt, ready};
+use futures_util::{FutureExt, TryFutureExt};
 use jiff::{Span, SpanRelativeTo, ToSpan, Zoned};
 use lettre::{AsyncTransport, Message};
 use rand::RngExt;
@@ -161,11 +162,14 @@ pub async fn launch() -> anyhow::Result<()> {
     tokio::spawn(async move {
         let mut faulty_proxy_ids = HashSet::new();
         loop {
-            let Some(expired) = poll_fn(|cx| {
-                let lock_fut = std::pin::pin!(CERT_WAIT_QUEUE.lock());
-                let mut cache = ready!(lock_fut.poll(cx));
-                cache.poll_expired(cx)
-            })
+            let Some(expired) = async {
+                let mut lock = CERT_WAIT_QUEUE.lock().await;
+                poll_fn(|cx| match lock.poll_expired(cx) {
+                    Poll::Ready(r) => Poll::Ready(r),
+                    Poll::Pending => Poll::Ready(None),
+                })
+                .await
+            }
             .await
             else {
                 // No certs registered check back in 1m
@@ -173,7 +177,7 @@ pub async fn launch() -> anyhow::Result<()> {
                 continue;
             };
             if faulty_proxy_ids.contains(expired.get_ref()) {
-                tracing::debug!("Skipping signing of faulty cert for {}", expired.get_ref());
+                tracing::info!("Skipping signing of faulty cert for {}", expired.get_ref());
                 continue;
             }
             let Ok(DbCert::Enrolled { resign_until, .. }) =
@@ -198,7 +202,10 @@ pub async fn launch() -> anyhow::Result<()> {
             .await
             {
                 tracing::warn!("Failed to sign csr for {}: {e:#}", expired.get_ref());
-                faulty_proxy_ids.insert(expired.into_inner());
+                if e.downcast_ref::<reqwest::Error>().is_none() {
+                    tracing::warn!("Skipping signing of faulty cert for {}", expired.get_ref());
+                    faulty_proxy_ids.insert(expired.into_inner());
+                }
             };
             if let Err(e) = update_expiration_queue().await {
                 tracing::error!("Failed to update expiration queue: {e:#}");
@@ -220,6 +227,7 @@ pub async fn launch() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tracing::instrument(level = "debug")]
 async fn update_expiration_queue() -> anyhow::Result<()> {
     let (pems, crl) = tokio::try_join!(get_all_vault_pems(), get_crl())?;
     let newest_certs = get_newest_cert_per_cn(&pems, CertificateRevocationList::from_der(&crl)?.1)?;
