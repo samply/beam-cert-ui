@@ -174,6 +174,12 @@ pub async fn launch() -> anyhow::Result<()> {
             else {
                 // No certs registered check back in 1m
                 tokio::time::sleep(Duration::from_secs(60)).await;
+                // Refresh the expiration queue if we are empty after having skipped the signing of the last cert in the queue for whatever reason (e.g. expired or faulty)
+                if CERT_WAIT_QUEUE.lock().await.is_empty() {
+                    if let Err(e) = update_expiration_queue().await {
+                        tracing::error!("Failed to update expiration queue: {e:#}");
+                    }
+                }
                 continue;
             };
             if faulty_proxy_ids.contains(expired.get_ref()) {
@@ -184,11 +190,12 @@ pub async fn launch() -> anyhow::Result<()> {
                 CERTS.get_or_create(expired.get_ref()).await
             else {
                 tracing::warn!("Failed to get cert info for {}", expired.get_ref());
+                faulty_proxy_ids.insert(expired.into_inner());
                 continue;
             };
             if resign_until < Zoned::now() {
                 tracing::warn!(
-                    "Cert for {} has expired but and is not scheduled for resigning",
+                    "Cert for {:?} has expired and is not scheduled for resigning",
                     expired.get_ref()
                 );
                 continue;
