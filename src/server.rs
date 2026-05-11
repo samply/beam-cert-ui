@@ -696,7 +696,7 @@ async fn revoke_serial(serial: &str) -> anyhow::Result<()> {
 }
 
 #[tracing::instrument(err)]
-pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<String> {
+pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<Option<String>> {
     let proxy_id = format!("{site_id}.{}", CONFIG.broker_id);
     let token = match CERTS.get(&proxy_id)? {
         Some(DbCert::Pending { otp, .. }) => otp,
@@ -733,7 +733,11 @@ pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<String> {
             otp: token.clone(),
         },
     )?;
-    Ok(token)
+    if CONFIG.smtp_url.is_none() {
+        Ok(Some(token))
+    } else {
+        Ok(None)
+    }
 }
 
 fn format_email(token: &str, site_id: &str) -> String {

@@ -83,10 +83,7 @@ fn Status() -> Element {
                             }
                             td { class: "actions",
                                 button { onclick: move |_| async move {
-                                    if let Err(e) = invite_site(email.read().to_owned(), site_id.read().to_owned()).await {
-                                        tracing::error!("Failed to invite site: {e:#}");
-                                        return;
-                                    };
+                                    handle_invite_site(email.read().to_owned(), site_id.read().to_owned()).await;
                                     email.set(String::new());
                                     site_id.set(String::new());
                                     sites_resource.restart();
@@ -102,6 +99,19 @@ fn Status() -> Element {
             }
         }
     }
+}
+
+async fn handle_invite_site(email: String, site_id: String) {
+    match invite_site(email, site_id).await {
+        Ok(Some(token)) => {
+            _ = document::eval(&format!("alert('Invite token: {token}')")).await;
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::error!("Failed to invite site: {e:#}");
+            _ = document::eval(&format!("alert('Failed to invite site: {e:#}')")).await;
+        }
+    };
 }
 
 fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
@@ -134,9 +144,7 @@ fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
                         let proxy_name = proxy_name.to_owned();
                         let email = email.as_ref().unwrap().clone();
                         async move {
-                            if let Err(e) = invite_site(email, proxy_name).await {
-                                tracing::error!("Failed to invite site: {e:#}");
-                            };
+                            handle_invite_site(email, proxy_name).await;
                             sites.restart();
                         } },
                         i { class: "fa-solid fa-repeat" }
@@ -279,7 +287,7 @@ async fn get_status() -> Result<Vec<SiteInfo>, ServerFnError> {
 }
 
 #[server(endpoint = "invite")]
-async fn invite_site(email: String, site_id: String) -> Result<String, ServerFnError> {
+async fn invite_site(email: String, site_id: String) -> Result<Option<String>, ServerFnError> {
     server::invite_site(&email, &site_id)
         .await
         .inspect_err(|e| tracing::warn!(%e))
