@@ -787,7 +787,7 @@ pub fn generate_secret<const N: usize>() -> String {
 mod submit {
     use constant_time_eq::constant_time_eq;
 
-    use axum::{Form, response::Html};
+    use axum::{Form, http::StatusCode, response::Html};
 
     use super::*;
 
@@ -801,7 +801,7 @@ mod submit {
         token: String,
     }
 
-    pub async fn submit_handler(form: Form<SubmitForm>) -> Html<String> {
+    pub async fn submit_handler(form: Form<SubmitForm>) -> (StatusCode, Html<String>) {
         let Some((expected_proxy_id, email)) = CERTS
             .get_all_pending()
             .into_iter()
@@ -810,15 +810,21 @@ mod submit {
                     .then_some((proxy_id, cert.get_email()?.to_owned()))
             })
         else {
-            return message("Invalid token or no pending registration found");
+            return (StatusCode::UNAUTHORIZED, message("Invalid token or no pending registration found"));
         };
         if let Err(e) = register_new_csr(&email, &form.csr, &expected_proxy_id).await {
             tracing::error!("Failed to register CSR: {e:#?}");
-            return message(&format!("Failed to register CSR: {e:#}"));
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                message(&format!("Failed to register CSR: {e:#}")),
+            );
         }
-        message(&format!(
-            "Successfully registered CSR for {expected_proxy_id} with email {email}. You can now start the bridgehead."
-        ))
+        (
+            StatusCode::OK,
+            message(&format!(
+                "Successfully registered CSR for {expected_proxy_id} with email {email}. You can now start the bridgehead."
+            )),
+        )
     }
 
     fn message(inner: &str) -> Html<String> {
