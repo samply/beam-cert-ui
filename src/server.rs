@@ -186,12 +186,17 @@ pub async fn launch() -> anyhow::Result<()> {
                 tracing::info!("Skipping signing of faulty cert for {}", expired.get_ref());
                 continue;
             }
-            let Ok(DbCert::Enrolled { resign_until, .. }) =
-                CERTS.get_or_create(expired.get_ref()).await
-            else {
-                tracing::warn!("Failed to get cert info for {}", expired.get_ref());
-                faulty_proxy_ids.insert(expired.into_inner());
-                continue;
+            let resign_until = match CERTS.get_or_create(expired.get_ref()).await {
+                Ok(DbCert::Enrolled { resign_until, .. }) => resign_until,
+                Ok(DbCert::Pending { .. }) => {
+                    tracing::error!("Pending cert ended up in the queue: {}", expired.get_ref());
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to get cert info for {}: {e:#}", expired.get_ref());
+                    faulty_proxy_ids.insert(expired.into_inner());
+                    continue;
+                }
             };
             if resign_until < Zoned::now() {
                 tracing::warn!(
