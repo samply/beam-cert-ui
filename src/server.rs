@@ -320,6 +320,7 @@ impl CertDb {
     fn insert(&self, proxy_id: &str, cert: &DbCert) -> anyhow::Result<()> {
         self.0
             .insert(proxy_id.as_bytes(), serde_json::to_vec(cert)?)?;
+        self.0.flush()?;
         Ok(())
     }
 
