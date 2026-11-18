@@ -29,7 +29,7 @@ sled = { version = "0.34", optional = true }
 futures-util = { version = "0.3", optional = true }
 constant_time_eq = { version = "0.6", optional = true }
 x509-parser = { version = "0.18.1", optional = true }
-jiff = { version = "0.2", features = ["serde"] }
+jiff = { version = "1", features = ["serde"] }
 async-stream = { version = "0.3", optional = true }
 indexmap = "2"
 
@@ -55,8 +55,6 @@ server = [
     "dioxus/server",
 ]
 web = ["dioxus/web", "jiff/js"]
-desktop = ["dioxus/desktop"]
-mobile = ["dioxus/mobile"]
 async-stream = ["dep:async-stream"]
 tracing = ["dep:tracing"]
 
