@@ -8,7 +8,7 @@ use dioxus::{
     logger::tracing::{self},
     prelude::*,
 };
-use jiff::{SignedDuration, Span, SpanCompare, SpanRound, ToSpan, Zoned};
+use jiff::{SignedDuration, Span, SpanCompare, SpanRound, ToSpan, ZonedDateTime};
 use serde::{Deserialize, Serialize};
 
 use crate::tasks::Tasks;
@@ -118,7 +118,7 @@ fn render_site<T>(site: &SiteInfo, mut sites: Resource<T>) -> Element {
     let proxy_name = site.proxy_id.split_once('.').unwrap().0.to_owned();
     let proxy_id = CopyValue::new(site.proxy_id.clone());
     let email = site.email.clone();
-    let now = Zoned::now();
+    let now = ZonedDateTime::now();
     let span_round = SpanRound::new()
         .days_are_24_hours()
         .smallest(jiff::Unit::Hour)
@@ -321,7 +321,7 @@ pub enum ProxyStatus {
     WaitingOnCsr,
     Registered {
         online: OnlineStatus,
-        resign_until: Zoned,
+        resign_until: ZonedDateTime,
         cert_expires_in: Span,
     },
 }

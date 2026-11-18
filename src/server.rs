@@ -14,7 +14,7 @@ use axum::{Router, body::Bytes, routing::get};
 use clap::Parser;
 use dioxus::prelude::*;
 use futures_util::{FutureExt, TryFutureExt};
-use jiff::{Span, SpanRelativeTo, ToSpan, Zoned};
+use jiff::{Span, SpanRelativeTo, ToSpan, ZonedDateTime};
 use lettre::{AsyncTransport, Message};
 use rand::RngExt;
 use reqwest::{
@@ -198,7 +198,7 @@ pub async fn launch() -> anyhow::Result<()> {
                     continue;
                 }
             };
-            if resign_until < Zoned::now() {
+            if resign_until < ZonedDateTime::now() {
                 tracing::warn!(
                     "Cert for {:?} has expired and is not scheduled for resigning",
                     expired.get_ref()
@@ -248,7 +248,7 @@ async fn update_expiration_queue() -> anyhow::Result<()> {
     for (proxy_id, cert) in newest_certs {
         // Skip certs that are already enrolled and should not be renewed
         if CERTS.get_or_create(&proxy_id).await
-            .map(|cert| matches!(cert, DbCert::Enrolled { resign_until, .. } if resign_until < Zoned::now()))
+            .map(|cert| matches!(cert, DbCert::Enrolled { resign_until, .. } if resign_until < ZonedDateTime::now()))
             .unwrap_or(false) {
             continue;
         }
@@ -294,8 +294,8 @@ impl CertDb {
         };
         let cert = DbCert::Enrolled {
             email,
-            resign_until: &Zoned::now() + 1.year(),
-            first_insert: Zoned::now(),
+            resign_until: &ZonedDateTime::now() + 1.year(),
+            first_insert: ZonedDateTime::now(),
         };
         self.0
             .insert(proxy_id.as_bytes(), serde_json::to_vec(&cert)?)?;
@@ -343,13 +343,13 @@ impl CertDb {
 enum DbCert {
     Pending {
         email: String,
-        sent: Zoned,
+        sent: ZonedDateTime,
         otp: String,
     },
     Enrolled {
         email: Option<String>,
-        resign_until: Zoned,
-        first_insert: Zoned,
+        resign_until: ZonedDateTime,
+        first_insert: ZonedDateTime,
     },
 }
 
@@ -471,7 +471,7 @@ pub async fn get_certs() -> anyhow::Result<Vec<SiteInfo>> {
                         let cert = DbCert::Enrolled {
                             email: Some(email.clone()),
                             resign_until: resign_until.clone(),
-                            first_insert: Zoned::now(),
+                            first_insert: ZonedDateTime::now(),
                         };
                         CERTS.insert(&proxy_id, &cert)?;
                         resign_until
@@ -533,7 +533,7 @@ async fn get_online_status(proxy_id: &str) -> anyhow::Result<OnlineStatus> {
                 &res.json::<serde_json::Value>().await?["last_disconnect"],
             )?;
             Ok(OnlineStatus::LastSeen(
-                Zoned::try_from(system_time)?.duration_since(&Zoned::now()),
+                ZonedDateTime::try_from(system_time)?.duration_since(&ZonedDateTime::now()),
             ))
         }
         StatusCode::NOT_FOUND => Ok(OnlineStatus::NeverConnected),
@@ -594,8 +594,8 @@ pub async fn register_new_csr(
         cn,
         &DbCert::Enrolled {
             email: Some(email.into()),
-            resign_until: &Zoned::now() + 1.year(),
-            first_insert: Zoned::now(),
+            resign_until: &ZonedDateTime::now() + 1.year(),
+            first_insert: ZonedDateTime::now(),
         },
     )?;
     sign_csr(csr.as_bytes()).await?;
@@ -735,7 +735,7 @@ pub async fn invite_site(email: &str, site_id: &str) -> anyhow::Result<Option<St
         &proxy_id,
         &DbCert::Pending {
             email: email.into(),
-            sent: Zoned::now(),
+            sent: ZonedDateTime::now(),
             otp: token.clone(),
         },
     )?;
@@ -761,7 +761,7 @@ pub trait CertExt {
 
 fn get_ttl(cert: &X509Certificate) -> anyhow::Result<Span> {
     let ts = jiff::Timestamp::from_second(cert.validity.not_after.timestamp())?;
-    Ok(ts - jiff::Timestamp::now())
+    Ok(Span::try_from(ts - jiff::Timestamp::now())?)
 }
 
 impl CertExt for X509Name<'_> {
