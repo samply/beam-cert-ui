@@ -1,5 +1,4 @@
 use std::{
-    cmp::Ordering,
     collections::{HashMap, HashSet, hash_map::Entry},
     future::poll_fn,
     net::SocketAddr,
@@ -418,7 +417,7 @@ fn get_newest_cert_per_cn<'a>(
     pems: &'a [Pem],
     crl: CertificateRevocationList,
 ) -> anyhow::Result<HashMap<String, X509Certificate<'a>>> {
-    let mut newest_certs = HashMap::new();
+    let mut newest_certs = HashMap::<String, X509Certificate<'a>>::new();
     for pem in pems.iter() {
         let cert = pem.parse_x509()?;
         let cn = cert.subject.get_cn()?.to_owned();
@@ -437,9 +436,8 @@ fn get_newest_cert_per_cn<'a>(
         }
         match newest_certs.entry(cn) {
             Entry::Occupied(mut entry)
-                if get_ttl(entry.get())?
-                    .compare(get_ttl(&cert)?)
-                    .is_ok_and(Ordering::is_lt) =>
+                if entry.get().validity.not_after.timestamp()
+                    < cert.validity.not_after.timestamp() =>
             {
                 entry.insert(cert);
             }
